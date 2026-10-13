@@ -1,5 +1,5 @@
 /* Offline shell for دفتر الديون. Firebase data traffic is never touched here; Firestore keeps its own offline copy. */
-const VERSION = 'daftar-v1';
+const VERSION = 'daftar-v2';
 const RUNTIME = 'daftar-runtime-v1';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-256.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/wordmark.png'];
 

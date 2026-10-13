@@ -609,6 +609,9 @@ function customersScreen(){
     const pc = st.pending.length;
     h += `<button class="notice" data-act="tab" data-tab="approvals"><span class="count">${pc}</span><span class="txt"><b>${countAr(pc, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')} بانتظار موافقتك</b><small>سجلها الموظفين، وتنحسب على الزبون بعد ما توافق</small></span>${ic('back', 'flip')}</button>`;
   }
+  if (u.role === 'owner' && st.custReady && st.customers.length && Date.now() - (st.shop.lastBackupAt || 0) > 7 * 864e5) {
+    h += `<div class="backup">${ic('download')}<span class="txt"><b>${st.shop.lastBackupAt ? `آخر نسخة احتياطية ${relDay(isoOf(new Date(st.shop.lastBackupAt)))}` : 'بعدك ما نزّلت نسخة احتياطية'}</b><small>نزّل نسخة إكسل وخزنها بإيميلك. ياخذ ثواني.</small></span><button class="btn btn-ghost" data-act="export">نزّل هسه</button></div>`;
+  }
   if (showBal && st.custReady) {
     const t = totals();
     h += `<section class="totals" aria-label="المطلوب من الزبائن">
@@ -808,7 +811,13 @@ async function exportExcel(btn){
     a.href = url; a.download = `دفتر-الديون-${todayISO()}.xlsx`;
     document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
-    toast('نزل ملف الإكسل');
+    if (me().role === 'owner') {
+      const now = Date.now();
+      st.shop = Object.assign({}, st.shop, {lastBackupAt: now});
+      setDoc(ref('meta', 'shop'), {lastBackupAt: now}, {merge: true}).catch(() => {});
+      render();
+    }
+    toast('نزل ملف الإكسل. خزنه بإيميلك');
   } catch (err) { toastErr(err); }
   finally { if (btn) btn.disabled = false; }
 }
