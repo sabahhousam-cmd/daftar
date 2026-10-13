@@ -321,6 +321,16 @@ textarea.input{min-height:84px;resize:vertical}
 <div id="sheet-root"></div>
 <div id="toast-root" aria-live="polite"></div>
 <noscript><p style="padding:24px;text-align:center">التطبيق يحتاج JavaScript. افتحه من Chrome أو Safari.</p></noscript>
-<script type="module" src="app.js"></script>
+<script>
+// If the app's files could not load (first visit without internet), say so instead of spinning forever.
+window.__bootFail = function () {
+  var off = !navigator.onLine;
+  document.getElementById('app').innerHTML = '<section class="login"><img class="app-icon" src="icons/icon-256.png" alt="">' +
+    '<div class="brandname"><h1>' + (off ? 'ماكو نت' : 'ما اشتغل التطبيق') + '</h1></div>' +
+    '<div class="card"><p>' + (off ? 'أول مرة لازم تفتح التطبيق وانت متصل بالنت، حتى يتجهز يشتغل بدون نت.' : 'تأكد من النت وجرّب مرة ثانية.') + '</p>' +
+    '<button class="btn btn-primary block" onclick="location.reload()">حاول مرة ثانية</button></div></section>';
+};
+</script>
+<script type="module" src="app.js" onerror="window.__bootFail()"></script>
 </body>
 </html>
