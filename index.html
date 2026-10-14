@@ -257,6 +257,14 @@ button{-webkit-tap-highlight-color:transparent}
 .urow .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .urow .main b{font-size:15.5px}
 .urow .main small{font-size:12.5px;color:var(--muted)}
+.filepick input{display:none}
+.imp-row{display:flex;align-items:center;gap:10px;padding:10px 14px}
+.imp-row + .imp-row{border-top:1px solid var(--rule)}
+.imp-row .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.imp-row .main b{font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imp-row .main small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imp-row .bal{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;font-size:14px}
+.imp-row.skip{opacity:.5}
 .switch{position:relative;width:48px;height:28px;flex:none;border:0;border-radius:999px;background:var(--rule);cursor:pointer;transition:background .15s}
 .switch::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:22px;height:22px;border-radius:50%;background:var(--sheet);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:inset-inline-start .15s}
 .switch[aria-checked="true"]{background:var(--pay)}

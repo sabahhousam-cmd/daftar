@@ -597,7 +597,7 @@ function custListHTML(){
   if (showBal && ui.filter === 'late') rows.sort((a, b) => a.d.days - b.d.days); else rows.sort((a, b) => b.last - a.last);
   if (!rows.length) {
     if (q) return `<div class="empty">${ic('search')}<span>ماكو زبون بهالاسم.</span><button class="linkbtn" data-act="add-cust" data-name="${esc(ui.q.trim())}">أضف «${esc(ui.q.trim())}» كزبون جديد</button></div>`;
-    if (!st.customers.length) return `<div class="empty">${ic('users')}<span>بعد ماكو زبائن. اضغط «زبون جديد» وأضف أول زبون، ووياه رصيده السابق من الدفتر.</span></div>`;
+    if (!st.customers.length) return `<div class="empty">${ic('users')}<span>بعد ماكو زبائن. اضغط «زبون جديد» وأضف أول زبون، ووياه رصيده السابق من الدفتر.</span>${u.role === 'owner' ? '<button class="linkbtn" data-act="import">أو استورد أرصدة الدفتر من ملف إكسل</button>' : ''}</div>`;
     return `<div class="empty">${ic('users')}<span>ماكو زبائن بهالقائمة.</span></div>`;
   }
   return `<div class="list">${rows.map(r => custRow(r, showBal)).join('')}</div>`;
@@ -729,7 +729,8 @@ function reportsScreen(){
 }
 function todayReport(){
   if (!st.today) return loadingBox();
-  const t = todayISO(), todays = st.today.filter(e => isoOf(new Date(e.at)) === t && (e.status === 'approved' || e.status === 'pending'));
+  // opening balances carried over from the paper book are not today's business
+  const t = todayISO(), todays = st.today.filter(e => isoOf(new Date(e.at)) === t && (e.status === 'approved' || e.status === 'pending') && !e.opening);
   const cash = {IQD: 0, USD: 0}, cashWait = {IQD: 0, USD: 0};
   for (const e of todays) if (e.type === 'pay') { cash[e.cur] = r2(cash[e.cur] + e.amount); if (e.status === 'pending') cashWait[e.cur] = r2(cashWait[e.cur] + e.amount); }
   const waitTxt = (cashWait.IQD || cashWait.USD) ? `منها تنتظر الموافقة: ${[cashWait.IQD ? amtText(cashWait.IQD, 'IQD') : '', cashWait.USD ? amtText(cashWait.USD, 'USD') : ''].filter(Boolean).join(' و ')}` : 'كلها مقبولة';
@@ -757,13 +758,13 @@ function monthReport(){
   const m0 = monthRange(0), m1 = monthRange(1), R = monthRange(ui.monthOffset);
   let h = `<div class="chips" role="group" aria-label="الشهر"><button class="chip" data-act="month" data-o="0" aria-pressed="${ui.monthOffset === 0}">${MONTHS[m0.m]}</button><button class="chip" data-act="month" data-o="1" aria-pressed="${ui.monthOffset === 1}">${MONTHS[m1.m]}</button></div>`;
   if (!st.month || st.monthKey !== R.start) return h + loadingBox();
-  const debt = {IQD: 0, USD: 0}, pay = {IQD: 0, USD: 0};
-  for (const e of st.month) { const s = e.type === 'debt' ? debt : pay; s[e.cur] = r2(s[e.cur] + e.amount); }
-  const newCust = st.customers.filter(c => { const d = new Date(c.createdAt || 0); return d.getFullYear() === R.y && d.getMonth() === R.m; }).length;
+  const debt = {IQD: 0, USD: 0}, pay = {IQD: 0, USD: 0}, moves = st.month.filter(e => !e.opening);
+  for (const e of moves) { const s = e.type === 'debt' ? debt : pay; s[e.cur] = r2(s[e.cur] + e.amount); }
+  const newCust = st.customers.filter(c => { const d = new Date(c.createdAt || 0); return !c.imported && d.getFullYear() === R.y && d.getMonth() === R.m; }).length;
   h += `<div class="stat-grid">
     <div class="stat"><span class="k">ديون جديدة</span><span class="v owe">${amtsInline(debt)}</span></div>
     <div class="stat"><span class="k">تسديدات</span><span class="v cred">${amtsInline(pay)}</span></div>
-    <div class="stat"><span class="k">عدد الحركات</span><span class="v">${st.month.length}</span></div>
+    <div class="stat"><span class="k">عدد الحركات</span><span class="v">${moves.length}</span></div>
     <div class="stat"><span class="k">زبائن جدد</span><span class="v">${newCust}</span></div></div>`;
   const top = custRows().filter(r => r.b.IQD > 0 || r.b.USD > 0).sort((a, b) => (b.b.IQD - a.b.IQD) || (b.b.USD - a.b.USD)).slice(0, 5);
   h += `<section class="stack"><div class="sec-h"><h2>أكثر المطلوبين هسه</h2><span>${countAr(top.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}</span></div>`;
@@ -781,11 +782,12 @@ async function loadMonth(){
   if (!ui.view && ui.tab === 'reports') render();
 }
 function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 async function exportExcel(btn){
   if (btn) btn.disabled = true;
   toast('جاري تجهيز الملف…');
   try {
-    if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    if (!window.XLSX) await loadScript(XLSX_URL);
     const X = window.XLSX;
     const all = ents(await getDocs(col('entries')));
     const byC = {}; for (const e of all) (byC[e.cid] = byC[e.cid] || []).push(e);
@@ -822,6 +824,159 @@ async function exportExcel(btn){
   finally { if (btn) btn.disabled = false; }
 }
 
+/* ---------- import from Excel (owner): the paper book's balances, or a backup from this app ---------- */
+// Columns are found by their header text, so the book file and the app's own backup both work.
+const IMPORT_COLS = {
+  name: ['الاسم', 'الزبون', 'اسم الزبون'],
+  note: ['المنطقة', 'المنطقة / ملاحظة'],
+  phone: ['الهاتف', 'رقم الهاتف', 'رقم الواتساب'],
+  IQD: ['دينار', 'الرصيد بالدينار'],
+  USD: ['دولار', 'الرصيد بالدولار'],
+  due: ['موعد التسديد'],
+  page: ['الصفحة']
+};
+const custKey = (name, note) => `${norm(name)}|${norm(note || '')}`;
+function findImportTable(X, wb){
+  for (const sn of wb.SheetNames) {
+    const rows = X.utils.sheet_to_json(wb.Sheets[sn], {header: 1, raw: true, defval: ''});
+    for (let h = 0; h < Math.min(rows.length, 30); h++) {
+      const heads = rows[h].map(v => norm(v));
+      const c = {};
+      for (const k of Object.keys(IMPORT_COLS)) { const i = IMPORT_COLS[k].map(a => heads.indexOf(norm(a))).find(x => x >= 0); c[k] = i === undefined ? -1 : i; }
+      if (c.name >= 0 && (c.IQD >= 0 || c.USD >= 0)) return {c, rows: rows.slice(h + 1), backup: heads.includes(norm('الرصيد بالدينار'))};
+    }
+  }
+  return null;
+}
+function parseImport(found){
+  const {c, rows, backup} = found, out = [], bad = [];
+  const have = new Set(st.customers.map(x => custKey(x.name, x.note))), seen = new Set();
+  const cell = (row, i) => i >= 0 && row[i] != null ? row[i] : '';
+  const text = v => String(v).trim().replace(/\s+/g, ' ');
+  const money = (v, cur) => {
+    if (v === '') return 0;
+    const n = typeof v === 'number' ? v : parseAmount(String(v));
+    return isFinite(n) ? (cur === 'IQD' ? Math.round(n) : r2(n)) : NaN;
+  };
+  for (const row of rows) {
+    const name = text(cell(row, c.name));
+    if (!name || norm(name) === norm('المجموع')) continue;
+    const IQD = money(cell(row, c.IQD), 'IQD'), USD = money(cell(row, c.USD), 'USD');
+    if (isNaN(IQD) || isNaN(USD)) { bad.push(name); continue; }
+    const note = text(cell(row, c.note)), due = text(cell(row, c.due)), key = custKey(name, note);
+    out.push({name, note, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)),
+      due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, skip: have.has(key) ? 'app' : seen.has(key) ? 'file' : ''});
+    seen.add(key);
+  }
+  return {rows: out, bad, backup};
+}
+// after a partial import, the rows that made it in are marked so they are never written twice
+function refreshSkips(P){
+  const have = new Set(st.customers.map(x => custKey(x.name, x.note)));
+  for (const r of P.rows) if (r.skip !== 'file' && have.has(custKey(r.name, r.note))) r.skip = 'app';
+}
+function openImport(){
+  sheetState = {kind: 'import', file: '', parsed: null, busy: false, err: ''};
+  openSheet(`${sheetHead('استيراد من إكسل', 'أرصدة الدفتر الورقي، أو نسخة احتياطية من التطبيق')}<div class="sheet-body" id="imp-body"></div><div class="sheet-foot" id="imp-foot"></div>`, renderImport);
+}
+function renderImport(){
+  const s = sheetState; if (!s || s.kind !== 'import') return;
+  const body = $('#imp-body'), foot = $('#imp-foot'); if (!body || !foot) return;
+  const warn = s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : '';
+  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.parsed ? 'ملف ثاني' : 'اختار الملف'}<input type="file" id="imp-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
+  if (s.reading) { body.innerHTML = `<div class="empty"><div class="spin" role="status" aria-label="جاري القراءة"></div><span>جاري قراءة الملف…</span></div>`; foot.innerHTML = ''; return; }
+  if (!s.parsed) {
+    body.innerHTML = `<p class="lead">اختار ملف الإكسل من موبايلك. قبل ما ينضاف أي شي تشوف كل الأسماء والمجاميع.</p>
+      <p class="note">${ic('info')}<span>كل زبون ينضاف وويا رصيده كحركة وحدة مقبولة. ما تنرسل رسائل واتساب، والزبون الموجود بالتطبيق ما يتكرر.</span></p>${warn}`;
+    foot.innerHTML = pick(true);
+    return;
+  }
+  const P = s.parsed, add = P.rows.filter(r => !r.skip), skipped = P.rows.length - add.length;
+  const sum = {IQD: 0, USD: 0};
+  for (const r of add) { sum.IQD += r.IQD; sum.USD = r2(sum.USD + r.USD); }
+  const line = (k, v) => `<div class="kv"><span>${k}</span><span class="vals">${v}</span></div>`;
+  let h = `<div>${line('زبائن ينضافون', `<b>${add.length}</b>`)}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
+    ${skipped ? line('موجودين أصلاً، ما ينضافون', `<b>${skipped}</b>`) : ''}</div>`;
+  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')} مبلغه مو مفهوم وما ينضاف: ${esc(P.bad.join('، '))}</span></div>`;
+  h += warn;
+  h += `<div class="list">${P.rows.map(r => {
+    const amts = ['IQD', 'USD'].filter(cur => r[cur]).map(cur => amt(Math.abs(r[cur]), cur, r[cur] > 0 ? 'owe' : 'cred')).join('');
+    const sub = [];
+    if (r.skip) sub.push(`<span class="pill off">${r.skip === 'app' ? 'موجود' : 'مكرر بالملف'}</span>`);
+    if (r.note) sub.push(esc(r.note));
+    if (r.phone) sub.push(`<span dir="ltr">${esc(r.phone)}</span>`);
+    return `<div class="imp-row${r.skip ? ' skip' : ''}"><span class="main"><b>${esc(r.name)}</b>${sub.length ? `<small>${sub.join(' · ')}</small>` : ''}</span><span class="bal">${amts || '<span class="pill ok">مسدد</span>'}</span></div>`;
+  }).join('')}</div>`;
+  h += `<p class="note">${ic('info')}<span>كل رصيد ينكتب بكشف الزبون باسم «${P.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر'}»، وتكدر تعدّله أو تحذفه بعدين.</span></p>`;
+  body.innerHTML = h;
+  foot.innerHTML = s.busy
+    ? `<button class="btn btn-primary grow" id="imp-go" disabled>جاري الاستيراد…</button>`
+    : `<button class="btn btn-primary grow" id="imp-go" data-act="imp-go" ${add.length ? '' : 'disabled'}>${ic('check')}${add.length ? `استيراد ${countAr(add.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}` : 'ماكو زبائن جدد'}</button>${pick(false)}`;
+}
+async function readImportFile(file){
+  const s = sheetState; if (!s || s.kind !== 'import' || !file || s.busy) return;
+  Object.assign(s, {file: file.name, parsed: null, err: '', reading: true}); renderImport();
+  try {
+    if (!window.XLSX) {
+      try { await loadScript(XLSX_URL); } catch (err) { throw new Error('reader'); }
+    }
+    const X = window.XLSX, found = findImportTable(X, X.read(await file.arrayBuffer(), {type: 'array'}));
+    if (found) s.parsed = parseImport(found);
+    else s.err = 'ما لكيت بالملف عمود «الاسم» ووياه عمود «دينار» أو «دولار». اختار ملف الأرصدة، أو نسخة احتياطية نزلتها من التطبيق.';
+  } catch (err) {
+    console.warn(err);
+    s.err = err && err.message === 'reader' ? 'ما گدرت أحمّل قارئ الإكسل. تأكد من النت وجرّب مرة ثانية.' : 'ما انفتح الملف. تأكد إنه ملف إكسل (xlsx).';
+  }
+  s.reading = false;
+  if (sheetState === s) renderImport();
+}
+async function runImport(){
+  const s = sheetState; if (!s || s.kind !== 'import' || !s.parsed || s.busy) return;
+  refreshSkips(s.parsed);
+  const add = s.parsed.rows.filter(r => !r.skip);
+  if (!add.length) { renderImport(); return; }
+  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تستورد.'; renderImport(); return; }
+  s.busy = true; s.err = ''; renderImport();
+  const m = me(), now = Date.now(), today = todayISO(), sum = {IQD: 0, USD: 0};
+  const base = s.parsed.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر';
+  let seq = m.seq || 0, done = 0;
+  const progress = () => { const b = $('#imp-go'); if (b) b.textContent = `جاري الاستيراد… ${done} من ${add.length}`; };
+  progress();
+  // One small batch per customer, so the security rules' per-request document reads stay well under Firestore's limit.
+  const jobs = add.map((r, i) => {
+    const t = now - i, b = writeBatch(fs), cref = doc(col('customers'));
+    b.set(cref, {name: r.name, phone: r.phone, note: r.note, limitIQD: 0, limitUSD: 0, createdAt: t, createdBy: m.id,
+      bal: {IQD: r.IQD, USD: r.USD}, due: (r.IQD > 0 || r.USD > 0) && r.due ? r.due : null, lastAt: t, imported: true});
+    for (const cur of ['IQD', 'USD']) {
+      const v = r[cur]; if (!v) continue;
+      seq++; sum[cur] = r2(sum[cur] + v);
+      b.set(doc(col('entries')), {cid: cref.id, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`, type: v > 0 ? 'debt' : 'pay', amount: Math.abs(v), cur,
+        note: base + (r.page ? ` — ص${r.page}` : ''), date: today, due: v > 0 ? (r.due || null) : null, by: m.id, at: t, serverAt: serverTimestamp(),
+        status: 'approved', approvedBy: m.id, approvedAt: t, edits: [], opening: true});
+    }
+    b.update(ref('users', m.id), {seq});
+    return b.commit().then(() => { done++; progress(); });
+  });
+  st.me = Object.assign({}, m, {seq});
+  st.inflight++;
+  try {
+    await Promise.all(jobs);
+    const lb = writeBatch(fs);
+    lb.set(doc(col('log')), Object.assign(logOf('import', null), {count: add.length, sumIQD: sum.IQD, sumUSD: sum.USD, file: s.file}));
+    await lb.commit();
+    closeSheet();
+    go({tab: 'customers', view: null, q: '', filter: 'all'});
+    toast(`انضاف ${countAr(add.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وويا أرصدتهم`);
+  } catch (err) {
+    console.warn(err);
+    s.busy = false;
+    s.err = `وكف الاستيراد بعد ${done} من ${add.length}. اضغط «استيراد» مرة ثانية، واللي انضافوا ما يتكررون.`;
+    refreshSkips(s.parsed);
+    if (sheetState === s) renderImport();
+    toastErr(err);
+  } finally { st.inflight--; }
+}
+
 /* ---------- more (owner) ---------- */
 function moreScreen(){
   const team = st.users.filter(u => u.role !== 'owner'), waiting = team.filter(u => !u.active && !u.code).length;
@@ -831,6 +986,7 @@ function moreScreen(){
       <button class="row" data-act="go" data-v="log"><span class="mi">${ic('list')}</span><span class="main"><span class="name">سجل الحركات</span><span class="sub">كل تسجيل وموافقة ورفض وتعديل وحذف، ومنو سواه</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="go" data-v="users"><span class="mi">${ic('shield')}</span><span class="main"><span class="name">الموظفين والصلاحيات</span><span class="sub">${waiting ? `<span class="pill wait">${countAr(waiting, 'واحد ينتظر التفعيل', 'اثنين ينتظرون التفعيل', 'ينتظرون التفعيل', 'ينتظرون التفعيل')}</span>` : countAr(team.length + 1, 'مستخدم واحد', 'مستخدمين اثنين', 'مستخدمين', 'مستخدم')}</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="go" data-v="settings"><span class="mi">${ic('store')}</span><span class="main"><span class="name">إعدادات المحل</span><span class="sub">الاسم والرقم اللي يطلعون بالرسائل</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="import"><span class="mi">${ic('doc')}</span><span class="main"><span class="name">استيراد من إكسل</span><span class="sub">أرصدة الدفتر الورقي، أو نسخة احتياطية</span></span>${ic('back', 'flip')}</button>
       ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">ثبّت التطبيق على الموبايل</span><span class="sub">حتى تطلع أيقونة محمود ناجي على الشاشة</span></span>${ic('back', 'flip')}</button>`}
     </div>`;
 }
@@ -858,10 +1014,11 @@ function logText(ev){
     case 'user_perm': return `${who} ${ev.on ? 'عطى' : 'شال من'} ${esc(ev.name)} صلاحية ${PERM_SHORT[ev.perm] || ''}`;
     case 'user_active': return `${who} ${ev.active ? 'فعّل' : 'أوقف'} حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
+    case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وأرصدتهم من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
   }
   return '';
 }
-const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store'};
+const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
@@ -1317,6 +1474,8 @@ const A = {
   'rtab'(d){ ui.reportTab = d.v; render(); },
   'month'(d){ ui.monthOffset = Number(d.o); render(); },
   'export'(d, el){ exportExcel(el); },
+  'import'(){ if (me().role === 'owner') openImport(); },
+  'imp-go'(){ runImport(); },
   'f-type'(d){ const s = sheetState; s.type = d.v; if (d.v === 'pay') s.due = null; else if (!s.due) s.due = addDays($('#f-date').value || todayISO(), 30); $('#f-due').value = s.due || ''; s.err = ''; formSync(); },
   'f-cur'(d){ sheetState.cur = d.v; formatAmountInput($('#f-amount'), d.v); formSync(); },
   'f-due'(d){ const n = Number(d.d); sheetState.due = n ? addDays($('#f-date').value || todayISO(), n) : null; $('#f-due').value = sheetState.due || ''; formSync(); },
@@ -1378,6 +1537,7 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   const t = ev.target;
+  if (t.id === 'imp-file') { const f = t.files && t.files[0]; t.value = ''; readImportFile(f); return; }
   if (t.id === 'f-due') { sheetState.due = t.value || null; formSync(); return; }
   if (t.id === 'f-date') formSync();
 });
