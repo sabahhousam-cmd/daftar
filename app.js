@@ -417,20 +417,27 @@ const waHref = (c, text) => { const p = waPhone(c.phone); return `https://wa.me/
 /* ---------- auth & status screens ---------- */
 const iconImg = () => '<img class="app-icon" src="icons/icon-256.png" alt="أيقونة دفتر الديون">';
 function bootView(){ return `<div class="boot">${iconImg()}<div class="spin" role="status" aria-label="جاري التحميل"></div></div>`; }
+// The sign-in itself is kept on the phone by Firebase (local persistence): after the first time the app opens
+// straight in. The email is also remembered for the login form, and the fields are marked so the phone's
+// password manager offers to save and fill them.
+const EMAIL_KEY = 'daftar-email';
+const savedEmail = () => { try { return localStorage.getItem(EMAIL_KEY) || ''; } catch (err) { return ''; } };
+const rememberEmail = email => { try { localStorage.setItem(EMAIL_KEY, email); } catch (err) {} };
 function authView(){
   const su = ui.authMode === 'signup';
   return `<section class="login">${iconImg()}
     <div class="brandname"><h1>دفتر الديون</h1><span>محمود ناجي</span></div>
     <form class="card" id="auth-form" novalidate>
       <div class="seg" role="group" aria-label="نوع الدخول"><button type="button" data-act="auth-mode" data-v="login" aria-pressed="${!su}">دخول</button><button type="button" data-act="auth-mode" data-v="signup" aria-pressed="${su}">حساب جديد</button></div>
-      ${su ? '<div class="field"><label for="a-name">اسمك</label><input class="input" id="a-name" autocomplete="name"></div>' : ''}
-      <div class="field"><label for="a-email">الإيميل</label><input class="input" id="a-email" type="email" dir="ltr" autocomplete="email" inputmode="email"></div>
-      <div class="field"><label for="a-pass">الباسورد</label><input class="input" id="a-pass" type="password" dir="ltr" autocomplete="${su ? 'new-password' : 'current-password'}"></div>
+      ${su ? '<div class="field"><label for="a-name">اسمك</label><input class="input" id="a-name" name="name" autocomplete="name"></div>' : ''}
+      <div class="field"><label for="a-email">الإيميل</label><input class="input" id="a-email" name="username" type="email" dir="ltr" autocomplete="username" inputmode="email" value="${su ? '' : esc(savedEmail())}"></div>
+      <div class="field"><label for="a-pass">الباسورد</label><input class="input" id="a-pass" name="password" type="password" dir="ltr" autocomplete="${su ? 'new-password' : 'current-password'}"></div>
       <div id="a-warn"></div>
       <button class="btn btn-primary block" id="a-submit" type="submit">${su ? 'سوّي حساب' : 'دخول'}</button>
       ${su ? '' : '<button type="button" class="linkbtn" data-act="forgot">نسيت الباسورد؟</button>'}
     </form>
-    <p class="fineprint">${su ? 'بعد ما تسوي حسابك، المدير يفعّله ويختار صلاحياتك.' : 'كل واحد يدخل بإيميله وباسورده.'}</p>
+    <p class="fineprint">${su ? 'بعد ما تسوي حسابك، المدير يفعّله ويختار صلاحياتك.' : 'تدخل مرة وحدة بس. بعدها التطبيق يفتح وحده على هذا الموبايل.'}</p>
+    ${isStandalone() ? '' : '<button type="button" class="linkbtn" data-act="install">ثبّت التطبيق على الشاشة حتى يبقى الدخول محفوظ</button>'}
   </section>`;
 }
 function verifyView(){
@@ -1500,7 +1507,11 @@ onAuthStateChanged(auth, u => {
     if (!snap.exists()) { if (!snap.metadata.fromCache) ensureUserDoc(u); return; }
     st.me = Object.assign({id: u.uid}, snap.data());
     if (!st.me.active) { stopData(); st.phase = 'waiting'; render(); return; }
-    if (st.phase !== 'app') { st.phase = 'app'; startData(); }
+    if (st.phase !== 'app') {
+      st.phase = 'app'; startData();
+      // ask the browser not to clear this app's saved data (the sign-in and the offline copy) when space runs low
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (err) {}
+    }
     render();
   }, err => {
     st.phase = err && err.code === 'permission-denied' ? 'rules' : 'error';
@@ -1527,6 +1538,7 @@ async function doAuth(){
     } else {
       await signInWithEmailAndPassword(auth, email, pass);
     }
+    rememberEmail(email);
   } catch (err) { authWarn(authMsg(err)); if ($('#a-submit')) $('#a-submit').disabled = false; }
 }
 const A = {
