@@ -396,11 +396,12 @@ function msgRemind(cid){
   L.push('نرجو التسديد بأقرب وقت، وشكراً لك.');
   return L.join('\n') + shopTail();
 }
-function msgStatement(cid){
-  const c = cust(cid), list = (custList(cid) || []).filter(e => e.status === 'approved').sort(sortChrono).slice(-10);
+// entries: the customer's entries when they are not the open customer's (the «send to all» list fetches them all at once)
+function msgStatement(cid, entries){
+  const c = cust(cid), all = entries || custList(cid) || [], list = all.filter(e => e.status === 'approved').sort(sortChrono).slice(-10);
   const L = [`كشف حساب ${c.name} لدى ${st.shop.name}`, ''];
   for (const e of list) { const d = parseISO(e.date), n = custNote(e); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtMsg(e.amount, e.cur)}${n ? ' (' + n + ')' : ''}`); }
-  const bt = balMsg(bal(cid));
+  const bt = balMsg(entries ? summarize(entries).bal : bal(cid));
   L.push('', bt ? `الرصيد المطلوب: ${bt}` : 'الحساب مسدد بالكامل.');
   return L.join('\n') + shopTail();
 }
@@ -630,6 +631,7 @@ function customersScreen(){
       <div class="total"><span class="lbl">المطلوب بالدولار</span><span class="val">${fmtNum(t.USD, 'USD')}<small>$</small></span></div></section>
       <div class="meta-line"><span>${t.owed ? countAr(t.owed, 'زبون واحد عليه دين', 'زبونين عليهم دين', 'زبائن عليهم دين', 'زبون عليهم دين') : 'ماكو ديون مفتوحة'}</span>${t.late ? `<span class="late-txt">${countAr(t.late, 'واحد متأخر', 'اثنين متأخرين', 'متأخرين', 'متأخر')}</span>` : ''}</div>`;
   }
+  if (showBal && st.custReady && can.message(u) && totals().owed) h += `<button class="btn btn-ghost block" data-act="bulk">${ic('wa')}إرسال الكشف للكل</button>`;
   h += `<label class="search" for="q">${ic('search')}<input id="q" type="search" placeholder="دوّر بالاسم أو المنطقة أو الرقم" value="${esc(ui.q)}" autocomplete="off" enterkeyhint="search"></label>`;
   if (showBal) h += `<div class="chips" id="cust-chips" role="group" aria-label="تصفية">${chipsHTML()}</div>`;
   return h + `<div id="cust-list">${custListHTML()}</div>`;
@@ -1214,6 +1216,73 @@ function openMessage(title, cid, text){
 const messageFor = (e, b) => e.type === 'debt' ? ['رسالة الدين للزبون', msgDebt(e, b)] : ['وصل التسديد للزبون', msgPay(e, b)];
 function withEffect(b, e){ const n = {IQD: b.IQD, USD: b.USD}; n[e.cur] = r2(n[e.cur] + effect(e)); return n; }
 
+/* ---------- send the statement to every customer who owes ----------
+   WhatsApp lets a page open one chat with a ready message, not send for the user, so this walks the
+   list: each tap opens one customer's statement in WhatsApp. Who got it today is remembered on this
+   phone; a number typed next to a customer without one is saved to that customer. */
+const bulkKey = () => `daftar-bulk-${todayISO()}`;
+function bulkLoad(){ try { return new Set(JSON.parse(localStorage.getItem(bulkKey()) || '[]')); } catch (err) { return new Set(); } }
+function bulkSave(set){ try { localStorage.setItem(bulkKey(), JSON.stringify([...set])); } catch (err) {} }
+async function openBulk(){
+  sheetState = {kind: 'bulk', byC: null, sent: bulkLoad(), phones: {}, err: ''};
+  const s = sheetState;
+  openSheet(`${sheetHead('إرسال الكشف للكل', '<span id="bk-sub"></span>')}<div class="sheet-body" id="bk-body"></div><div class="sheet-foot" id="bk-foot"></div>`, renderBulk);
+  try {
+    const byC = {};
+    for (const e of ents(await getDocs(col('entries')))) if (e.status === 'approved') (byC[e.cid] = byC[e.cid] || []).push(e);
+    s.byC = byC;
+  } catch (err) { s.err = 'ما گدرت أجيب الحسابات. تأكد من النت وجرّب مرة ثانية.'; toastErr(err); }
+  if (sheetState === s) renderBulk();
+}
+function bulkRows(){
+  const s = sheetState, out = [];
+  for (const c of st.customers) {
+    const L = s.byC[c.id] || [], b = summarize(L).bal;
+    if (b.IQD > 0 || b.USD > 0) out.push({c, b, L});
+  }
+  return out.sort((x, y) => (y.b.IQD - x.b.IQD) || (y.b.USD - x.b.USD));
+}
+const bulkPhone = (s, c) => (s.phones[c.id] !== undefined ? s.phones[c.id] : c.phone) || '';
+const bulkHref = (s, r) => waHref({phone: bulkPhone(s, r.c)}, msgStatement(r.c.id, r.L));
+function renderBulk(){
+  const s = sheetState; if (!s || s.kind !== 'bulk') return;
+  const body = $('#bk-body'), foot = $('#bk-foot'), sub = $('#bk-sub'); if (!body || !foot) return;
+  if (s.err) { body.innerHTML = `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>`; foot.innerHTML = ''; return; }
+  if (!s.byC) { body.innerHTML = loadingBox(); foot.innerHTML = ''; return; }
+  const rows = bulkRows(), done = rows.filter(r => s.sent.has(r.c.id)).length, next = rows.find(r => !s.sent.has(r.c.id));
+  const canPhone = can.editCustomer(me());
+  if (sub) sub.textContent = countAr(rows.length, 'زبون واحد عليه دين', 'زبونين عليهم دين', 'زبائن عليهم دين', 'زبون عليهم دين');
+  const pct = rows.length ? Math.round(done / rows.length * 100) : 100;
+  let h = `<div class="stack" style="gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:14px"><b>انرسل ${done} من ${rows.length}</b>${done ? '<button class="linkbtn" data-act="bulk-restart">ابدي من جديد</button>' : ''}</div><div class="meter"><i style="width:${pct}%"></i></div></div>
+    <p class="note">${ic('info')}<span>كل ضغطة تفتح الواتساب على كشف زبون جاهز. اضغط إرسال بالواتساب، وارجع للتطبيق للي بعده.${canPhone ? ' اللي ما عنده رقم، اكتب رقمه جنب اسمه وينحفظ وياه.' : ''}</span></p>
+    <div class="list">${rows.map(r => {
+      const sent = s.sent.has(r.c.id), amts = ['IQD', 'USD'].filter(cur => r.b[cur] > 0).map(cur => amt(r.b[cur], cur, 'owe')).join('');
+      const phoneIn = !r.c.phone && canPhone ? `<input class="input bulk-phone" data-cid="${r.c.id}" inputmode="tel" dir="ltr" placeholder="رقم الواتساب" value="${esc(s.phones[r.c.id] || '')}" aria-label="رقم واتساب ${esc(r.c.name)}">` : '';
+      const noPhone = !bulkPhone(s, r.c) && !phoneIn ? '<span class="pill off">بدون رقم</span>' : '';
+      return `<div class="bulk-row${sent ? ' sent' : ''}"><span class="main"><b>${esc(r.c.name)}</b><small>${r.c.note ? esc(r.c.note) : ''}${noPhone}</small><span class="bal">${amts}</span>${phoneIn}</span>
+        <a class="btn ${sent ? 'btn-ghost' : 'btn-wa'} bulk-send" data-bulk="${r.c.id}" href="${esc(bulkHref(s, r))}" target="_blank" rel="noopener">${ic(sent ? 'check' : 'wa')}${sent ? 'انرسل' : 'إرسال'}</a></div>`;
+    }).join('')}</div>`;
+  body.innerHTML = h;
+  foot.innerHTML = next
+    ? `<a class="btn btn-wa grow" data-bulk="${next.c.id}" href="${esc(bulkHref(s, next))}" target="_blank" rel="noopener">${ic('wa')}<span class="ell">إرسال لـ${esc(next.c.name)}</span></a>`
+    : `<button class="btn btn-ghost grow" data-act="close-sheet">${ic('check')}انرسل الكشف للكل</button>`;
+}
+function bulkSent(cid){
+  const s = sheetState; if (!s || s.kind !== 'bulk' || !s.byC) return;
+  const c = cust(cid); if (!c) return;
+  const typed = (s.phones[cid] || '').trim();
+  if (typed && !c.phone && can.editCustomer(me()) && waPhone(typed)) editCustomer(cid, {phone: typed});
+  s.sent.add(cid); bulkSave(s.sent);
+  // let the tap open WhatsApp before the list redraws
+  setTimeout(() => { if (sheetState === s) renderBulk(); }, 400);
+}
+function bulkTyped(input){
+  const s = sheetState; if (!s || s.kind !== 'bulk' || !s.byC) return;
+  const cid = input.dataset.cid; s.phones[cid] = input.value;
+  const r = bulkRows().find(x => x.c.id === cid); if (!r) return;
+  document.querySelectorAll(`a[data-bulk="${cid}"]`).forEach(a => { a.href = bulkHref(s, r); });
+}
+
 function openEntryForm(o){
   const c = cust(o.cid), u = me(), ed = o.edit || null, isStaff = u.role !== 'owner';
   sheetState = {kind: 'entry', cid: o.cid, edit: ed, type: ed ? ed.type : o.type, cur: ed ? ed.cur : lastCur(o.cid), err: ''};
@@ -1664,6 +1733,8 @@ const A = {
     toast(active ? `رجع حساب ${u.name} يشتغل` : `انوقف حساب ${u.name}`);
   },
   'rm-user'(d){ if (me().role === 'owner') openRemoveUser(d.id); },
+  'bulk'(){ if (can.message(me()) && can.seeBalances(me())) openBulk(); },
+  'bulk-restart'(){ const s = sheetState; if (!s || s.kind !== 'bulk') return; s.sent = new Set(); bulkSave(s.sent); renderBulk(); },
   'rm-user-go'(d){
     const u = userById(d.id); if (!u || u.role === 'owner' || me().role !== 'owner') return;
     userWrite(u, {removed: true, active: false, removedAt: Date.now(), removedBy: me().id}, {type: 'user_removed'});
@@ -1682,6 +1753,8 @@ const A = {
 document.addEventListener('click', ev => {
   const scrim = ev.target.closest('[data-scrim]');
   if (scrim && ev.target === scrim) { closeSheet(); return; }
+  const bulk = ev.target.closest('a[data-bulk]');
+  if (bulk) { bulkSent(bulk.dataset.bulk); return; }
   const el = ev.target.closest('[data-act]');
   if (!el || el.tagName === 'A') return;
   const fn = A[el.dataset.act]; if (!fn) return;
@@ -1695,6 +1768,7 @@ document.addEventListener('input', ev => {
   if (t.dataset && t.dataset.money) { formatAmountInput(t, t.dataset.money); return; }
   if (t.id === 'c-open') { formatAmountInput(t, sheetState.openCur); return; }
   if (t.id === 'rs-word') { if (sheetState) { sheetState.word = t.value; sheetState.err = ''; } return; }
+  if (t.classList && t.classList.contains('bulk-phone')) { bulkTyped(t); return; }
   if (t.id && t.closest('#app')) t.dataset.dirty = '1';
 });
 document.addEventListener('change', ev => {

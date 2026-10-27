@@ -272,6 +272,17 @@ button{-webkit-tap-highlight-color:transparent}
 .imp-row .main small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .imp-row .bal{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;font-size:14px}
 .imp-row.skip{opacity:.5}
+.bulk-row{display:flex;align-items:center;gap:10px;padding:10px 14px}
+.bulk-row + .bulk-row{border-top:1px solid var(--rule)}
+.bulk-row .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.bulk-row .main b{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bulk-row .main small{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.bulk-row .main small:empty{display:none}
+.bulk-row .bal{display:flex;gap:10px;flex-wrap:wrap;font-size:14px}
+.bulk-row .bulk-phone{font-size:16px;padding:7px 10px;margin-top:4px}
+.bulk-row .bulk-send{min-height:42px;padding:8px 12px;font-size:14px;flex:none}
+.bulk-row.sent .main{opacity:.55}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .switch{position:relative;width:48px;height:28px;flex:none;border:0;border-radius:999px;background:var(--rule);cursor:pointer;transition:background .15s}
 .switch::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:22px;height:22px;border-radius:50%;background:var(--sheet);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:inset-inline-start .15s}
 .switch[aria-checked="true"]{background:var(--pay)}
