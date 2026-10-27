@@ -33,7 +33,7 @@ const PRESETS = {
   supervisor: {balances: true, reports: true, edit: true, customers: true, messages: false},
   staff: {balances: false, reports: false, edit: false, customers: false, messages: false}
 };
-const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وصلاحياتهم'];
+const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وصلاحياتهم وشيل حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
 const CUR_WORD = {IQD: 'دينار', USD: 'دولار'};
 const MONTHS = ['كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران', 'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول'];
@@ -453,9 +453,11 @@ function verifyView(){
 }
 function waitingView(){
   const m = st.me || {}, stopped = (m.code || 0) > 0;
+  const title = m.removed ? 'هذا الحساب انشال' : stopped ? 'حسابك موقوف' : 'حسابك ينتظر التفعيل';
+  const text = m.removed ? 'صاحب الدفتر شال هذا الحساب، فما يكدر يدخل للتطبيق.' : stopped ? 'المدير وقف حسابك. راجعه حتى يرجّعه.' : 'المدير لازم يفعّل حسابك من صفحة الموظفين. أول ما يفعّله، يفتح التطبيق هنا وحده.';
   return `<section class="login">${iconImg()}
-    <div class="brandname"><h1>${stopped ? 'حسابك موقوف' : 'حسابك ينتظر التفعيل'}</h1><span>${esc(m.name || '')}</span></div>
-    <div class="card"><p>${stopped ? 'المدير وقف حسابك. راجعه حتى يرجّعه.' : 'المدير لازم يفعّل حسابك من صفحة الموظفين. أول ما يفعّله، يفتح التطبيق هنا وحده.'}</p>
+    <div class="brandname"><h1>${title}</h1><span>${esc(m.name || '')}</span></div>
+    <div class="card"><p>${text}</p>
       <button class="btn btn-ghost block" data-act="logout">${ic('logout')}خروج</button></div>
   </section>`;
 }
@@ -1098,7 +1100,7 @@ async function runReset(){
 
 /* ---------- more (owner) ---------- */
 function moreScreen(){
-  const team = st.users.filter(u => u.role !== 'owner'), waiting = team.filter(u => !u.active && !u.code).length;
+  const team = st.users.filter(u => u.role !== 'owner' && !u.removed), waiting = team.filter(u => !u.active && !u.code).length;
   return `<div class="titlebar"><h1 class="h1">المزيد</h1></div>
     <section class="about"><img class="app-icon sm" src="icons/icon-192.png" alt=""><div><b>دفتر الديون</b><small>${esc(st.shop.name)}</small></div></section>
     <div class="list">
@@ -1133,13 +1135,15 @@ function logText(ev){
     case 'user_role': return `${who} غيّر لقب ${esc(ev.name)} إلى ${ROLES[ev.role] || ''}`;
     case 'user_perm': return `${who} ${ev.on ? 'عطى' : 'شال من'} ${esc(ev.name)} صلاحية ${PERM_SHORT[ev.perm] || ''}`;
     case 'user_active': return `${who} ${ev.active ? 'فعّل' : 'أوقف'} حساب ${esc(ev.name)}`;
+    case 'user_removed': return `${who} شال حساب ${esc(ev.name)}`;
+    case 'user_restored': return `${who} رجّع حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
     case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وأرصدتهم من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
     case 'reset': return `${who} صفّر الدفتر وشال ${countAr(ev.customers || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} و${countAr(ev.entries || 0, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}`;
   }
   return '';
 }
-const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash'};
+const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
@@ -1158,19 +1162,31 @@ function usersScreen(){
   const link = appLink();
   let h = `<p class="lead">كل موظف يفتح رابط التطبيق من موبايله ويسوي حساب بإيميله، وبعدها يطلع هنا حتى تفعّله وتختار صلاحياته.</p>
     <div class="linkbox"><span dir="ltr">${esc(link)}</span><button class="mini" data-act="copy" data-text="${esc(link)}">${ic('copy')}نسخ الرابط</button></div>`;
-  const waiting = st.users.filter(u => u.role !== 'owner' && !u.active && !u.code);
+  const waiting = st.users.filter(u => u.role !== 'owner' && !u.removed && !u.active && !u.code);
   if (waiting.length) h += `<section class="stack"><div class="sec-h"><h2>ينتظرون التفعيل</h2><span>${waiting.length}</span></div><div class="list">${waiting.map(u =>
-    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="btn btn-primary" data-act="activate" data-id="${u.id}">تفعيل</button></div>`).join('')}</div></section>`;
+    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="iconbtn danger" data-act="rm-user" data-id="${u.id}" aria-label="شيل حساب ${esc(u.name)}">${ic('trash')}</button><button class="btn btn-primary" data-act="activate" data-id="${u.id}">تفعيل</button></div>`).join('')}</div></section>`;
   h += '<div class="list">';
-  for (const u of st.users.filter(x => x.role === 'owner' || x.active || x.code)) {
+  for (const u of st.users.filter(x => x.role === 'owner' || (!x.removed && (x.active || x.code)))) {
     if (u.role === 'owner') { h += `<div class="row" style="cursor:default"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)}</span><span class="sub">صاحب الدفتر، وعنده كل الصلاحيات</span></span><span class="role owner">المدير</span></div>`; continue; }
     const on = PERMS.filter(p => u.perms && u.perms[p.k]);
     const pills = !u.active ? '<span class="pill late">الحساب موقوف</span>' : on.length ? on.map(p => `<span class="pill ${p.k === 'messages' ? 'ok' : 'off'}">${PERM_SHORT[p.k]}</span>`).join('') : '<span class="pill off">يسجل بس</span>';
     h += `<button class="row" data-act="edit-user" data-id="${u.id}"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)} <span class="role">${ROLES[u.role]}</span></span><span class="pills">${pills}</span></span>${ic('back', 'flip')}</button>`;
   }
   h += '</div>';
+  const removed = st.users.filter(u => u.role !== 'owner' && u.removed);
+  if (removed.length) h += `<section class="stack"><div class="sec-h"><h2>حسابات مشالة</h2><span>${removed.length}</span></div><div class="list">${removed.map(u =>
+    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="mini" data-act="unrm-user" data-id="${u.id}">${ic('undo')}رجّعه</button></div>`).join('')}</div></section>`;
   h += `<section class="stack"><div class="sec-h"><h2>بس إلك</h2></div><div class="list perm" style="padding:0 14px">${OWNER_ONLY.map(x => `<div class="kv"><span>${x}</span>${ic('shield')}</div>`).join('')}</div></section>`;
   return h;
+}
+// Accounts are never deleted (the rules forbid it, and old receipts keep showing who wrote them):
+// a removed account is switched off, leaves every list, and can be brought back.
+function openRemoveUser(id){
+  const u = userById(id); if (!u || u.role === 'owner') return;
+  openSheet(`${sheetHead(`شيل حساب ${esc(u.name)}؟`, u.email ? `<span dir="ltr">${esc(u.email)}</span>` : '')}
+    <div class="sheet-body"><p class="lead" style="color:var(--ink)">ما يكدر يدخل للتطبيق بعد، ويختفي من قائمة الموظفين. الحركات اللي سجلها تبقى باسمه بالدفتر وبالسجل.</p>
+      <p class="note">${ic('info')}<span>إذا احتجته، ترجّعه من «حسابات مشالة» بأسفل صفحة الموظفين.</span></p></div>
+    <div class="sheet-foot"><button class="btn btn-danger grow" data-act="rm-user-go" data-id="${u.id}">${ic('trash')}شيل الحساب</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
 }
 function settingsScreen(){
   return `<form class="form" id="settings-form" novalidate>
@@ -1381,6 +1397,7 @@ function openUserSheet(id){
       <div class="field"><span class="lbl">الصلاحيات</span><div class="list" id="u-perms">${permRows(u)}</div></div>
       <div class="list"><div class="urow"><span class="main"><b>الحساب شغال</b><small>إذا وقفته ما يكدر يدخل، وحركاته تبقى باسمه بالسجل.</small></span><button class="switch" role="switch" aria-checked="${!!u.active}" aria-label="الحساب شغال" data-act="toggle-active" data-id="${u.id}"></button></div></div>
       <p class="note">${ic('shield')}<span>الموافقة والرفض والحذف تبقى إلك بس.</span></p>
+      <button class="btn btn-ghost danger block" data-act="rm-user" data-id="${u.id}">${ic('trash')}شيل الحساب</button>
     </div>`);
 }
 function openAccount(){
@@ -1645,6 +1662,20 @@ const A = {
     el.setAttribute('aria-checked', String(active));
     userWrite(u, {active}, {type: 'user_active', active});
     toast(active ? `رجع حساب ${u.name} يشتغل` : `انوقف حساب ${u.name}`);
+  },
+  'rm-user'(d){ if (me().role === 'owner') openRemoveUser(d.id); },
+  'rm-user-go'(d){
+    const u = userById(d.id); if (!u || u.role === 'owner' || me().role !== 'owner') return;
+    userWrite(u, {removed: true, active: false, removedAt: Date.now(), removedBy: me().id}, {type: 'user_removed'});
+    st.usersById[u.id] = Object.assign({}, u, {removed: true, active: false});
+    st.users = st.users.map(x => x.id === u.id ? st.usersById[u.id] : x);
+    closeSheet(); render();
+    toast(`انشال حساب ${u.name}`);
+  },
+  'unrm-user'(d){
+    const u = userById(d.id); if (!u || u.role === 'owner' || me().role !== 'owner') return;
+    userWrite(u, {removed: false}, {type: 'user_restored'});
+    toast(u.code ? `رجع حساب ${u.name}. شغّله من صفحته حتى يكدر يدخل` : `رجع حساب ${u.name} لقائمة اللي ينتظرون التفعيل`);
   }
 };
 
