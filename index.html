@@ -312,6 +312,8 @@ textarea.input{min-height:84px;resize:vertical}
 .sheet-sub{font-size:13px;color:var(--muted)}
 .sheet-head .iconbtn{background:var(--paper);border:1px solid var(--rule)}
 .sheet-body{overflow:auto;padding:4px 16px 18px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+/* a long list keeps its full height and the body scrolls; shrinking it (a .list clips) cut it to the first rows */
+.sheet-body>*{flex-shrink:0}
 .sheet-foot{display:flex;gap:10px;padding:12px 16px 16px;border-top:1px solid var(--rule)}
 .sheet .kv:first-child{border-top:0}
 .words{display:block;font-size:12px;color:var(--muted);font-weight:400}
