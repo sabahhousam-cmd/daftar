@@ -86,6 +86,10 @@ const addDays = (iso, n) => { const d = parseISO(iso); d.setDate(d.getDate() + n
 const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 864e5);
 const toLatin = s => String(s == null ? '' : s).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0));
 const norm = s => toLatin(s).toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ').trim();
+// st.customers, and so every list of them, is kept in Arabic alphabetical order (ا ب ت ث …);
+// أ/إ/آ count as ا, the same as the search, and the area decides between two customers with one name
+const AR_ORDER = new Intl.Collator('ar', {numeric: true});
+const nameOrder = (a, b) => AR_ORDER.compare(norm(a.name), norm(b.name)) || AR_ORDER.compare(norm(a.note), norm(b.note));
 const initial = name => (String(name || '').trim().charAt(0) || '؟');
 const noTag = no => `#${no || ''}`;
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
@@ -332,7 +336,7 @@ function addCustomer(o, open){
   commit(b);
   // show the new customer right away; the live snapshot replaces this copy
   const local = Object.assign({id: r.id}, c);
-  if (!st.custById[r.id]) { st.custById[r.id] = local; st.customers = st.customers.concat([local]); }
+  if (!st.custById[r.id]) { st.custById[r.id] = local; st.customers = st.customers.concat([local]).sort(nameOrder); }
   return local;
 }
 function editCustomer(cid, patch){
@@ -606,7 +610,6 @@ function custListHTML(){
   let rows = custRows();
   if (q) rows = rows.filter(r => norm(r.c.name).includes(q) || norm(r.c.note).includes(q) || (qd.length >= 3 && toLatin(r.c.phone).replace(/\D/g, '').includes(qd)));
   if (showBal) rows = rows.filter(FILTERS[ui.filter].test);
-  if (showBal && ui.filter === 'late') rows.sort((a, b) => a.d.days - b.d.days); else rows.sort((a, b) => b.last - a.last);
   if (!rows.length) {
     if (q) return `<div class="empty">${ic('search')}<span>ماكو زبون بهالاسم.</span><button class="linkbtn" data-act="add-cust" data-name="${esc(ui.q.trim())}">أضف «${esc(ui.q.trim())}» كزبون جديد</button></div>`;
     if (!st.customers.length) return `<div class="empty">${ic('users')}<span>بعد ماكو زبائن. اضغط «زبون جديد» وأضف أول زبون، ووياه رصيده السابق من الدفتر.</span>${u.role === 'owner' ? '<button class="linkbtn" data-act="import">أو استورد أرصدة الدفتر من ملف إكسل</button>' : ''}</div>`;
@@ -1350,7 +1353,7 @@ function bulkRows(){
     const L = s.byC[c.id] || [], b = summarize(L).bal;
     if (b.IQD > 0 || b.USD > 0) out.push({c, b, L});
   }
-  return out.sort((x, y) => (y.b.IQD - x.b.IQD) || (y.b.USD - x.b.USD));
+  return out;
 }
 const bulkPhone = (s, c) => (s.phones[c.id] !== undefined ? s.phones[c.id] : c.phone) || '';
 const bulkHref = (s, r) => waHref({phone: bulkPhone(s, r.c)}, msgStatement(r.c.id, r.L));
@@ -1636,7 +1639,7 @@ function startData(){
   dataSubs.push(onSnapshot(col('customers'), snap => {
     const L = []; snap.forEach(d => L.push(Object.assign({id: d.id}, d.data())));
     // archived customers (cleared by «تصفير الدفتر») stay in custById for names in the log, and leave every list
-    st.custById = Object.fromEntries(L.map(c => [c.id, c])); st.customers = L.filter(c => !c.archived); st.custReady = true; render();
+    st.custById = Object.fromEntries(L.map(c => [c.id, c])); st.customers = L.filter(c => !c.archived).sort(nameOrder); st.custReady = true; render();
   }, onSubErr));
   dataSubs.push(onSnapshot(query(col('entries'), where('status', '==', 'pending')), snap => { st.pending = ents(snap); render(); }, onSubErr));
 }
