@@ -854,7 +854,15 @@ const IMPORT_COLS = {
   memo: ['ملاحظة', 'ملاحظات', 'التفاصيل', 'تفاصيل']
 };
 const custKey = (name, note) => `${norm(name)}|${norm(note || '')}`;
-function findImportTable(X, wb){
+// a phone cell: text as written, or a number whose leading 0 Excel dropped (7701234567 → 07701234567)
+function normPhone(v){
+  if (v == null || v === '') return '';
+  const s = typeof v === 'number' ? String(Math.round(v)) : toLatin(String(v)).trim().replace(/\s+/g, ' ');
+  return /^7\d{9}$/.test(s) ? '0' + s : s;
+}
+const phoneOk = p => { const w = waPhone(p); return w.length >= 11 && w.length <= 15; };
+// need: 'amount' finds a balances table (name + dinar/dollar); 'phone' finds a numbers table (name + phone)
+function findImportTable(X, wb, need){
   for (const sn of wb.SheetNames) {
     const ws = wb.Sheets[sn];
     if (!ws['!ref']) continue;
@@ -864,7 +872,8 @@ function findImportTable(X, wb){
       const heads = rows[h].map(v => norm(v));
       const c = {};
       for (const k of Object.keys(IMPORT_COLS)) { const i = IMPORT_COLS[k].map(a => heads.indexOf(norm(a))).find(x => x >= 0); c[k] = i === undefined ? -1 : i; }
-      if (c.name >= 0 && (c.IQD >= 0 || c.USD >= 0)) return {c, rows: rows.slice(h + 1), start: top + h + 2, backup: heads.includes(norm('الرصيد بالدينار'))};
+      const ok = need === 'phone' ? c.phone >= 0 : (c.IQD >= 0 || c.USD >= 0);
+      if (c.name >= 0 && ok) return {c, rows: rows.slice(h + 1), start: top + h + 2, backup: heads.includes(norm('الرصيد بالدينار'))};
     }
   }
   return null;
@@ -892,7 +901,7 @@ function parseImport(found){
     if (isNaN(a.n) || isNaN(d.n)) { bad.push(name); return; }
     const IQD = Math.round(a.usd ? 0 : a.n), USD = r2(d.n + (a.usd ? a.n : 0));
     const note = text(cell(row, c.note)), due = text(cell(row, c.due)), key = custKey(name, note);
-    out.push({name, note, key, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)), memo: text(cell(row, c.memo)),
+    out.push({name, note, key, phone: normPhone(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)), memo: text(cell(row, c.memo)),
       due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, skip: have.has(key) ? 'app' : '', extra: !have.has(key) && seen.has(key)});
     seen.add(key);
   });
@@ -1100,6 +1109,105 @@ async function runReset(){
   } finally { st.inflight--; }
 }
 
+/* ---------- phone numbers from Excel: fills customers' numbers, never touches their debts ----------
+   A row finds its customer by name and area, or by name alone when only one customer has it. */
+function openPhones(){
+  sheetState = {kind: 'phones', file: '', plan: null, busy: false, reading: false, err: ''};
+  openSheet(`${sheetHead('أرقام الهواتف من إكسل', 'تنحفظ للزبائن الموجودين، والديون ما تتغير')}<div class="sheet-body" id="ph-body"></div><div class="sheet-foot" id="ph-foot"></div>`, renderPhones);
+}
+function planPhones(found){
+  const {c, rows, start} = found, cell = (row, i) => i >= 0 && row[i] != null ? row[i] : '';
+  const text = v => String(v).trim().replace(/\s+/g, ' ');
+  const byKey = new Map(), byName = new Map();
+  for (const x of st.customers) { byKey.set(custKey(x.name, x.note), x); const n = norm(x.name); byName.set(n, byName.has(n) ? null : x); }
+  const plan = {update: new Map(), same: 0, missing: [], bad: [], empty: 0};
+  rows.forEach((row, i) => {
+    const name = text(cell(row, c.name)); if (!name || norm(name) === norm('المجموع')) return;
+    const phone = normPhone(cell(row, c.phone));
+    if (!phone) { plan.empty++; return; }
+    const cu = byKey.get(custKey(name, text(cell(row, c.note)))) || byName.get(norm(name));
+    if (!cu) { plan.missing.push(`${name} (السطر ${start + i})`); return; }
+    if (!phoneOk(phone)) { plan.bad.push(`${name}: ${phone}`); return; }
+    if (waPhone(cu.phone) === waPhone(phone)) { plan.same++; return; }
+    plan.update.set(cu.id, {cu, phone});   // the same customer twice: the later line wins
+  });
+  return plan;
+}
+function renderPhones(){
+  const s = sheetState; if (!s || s.kind !== 'phones') return;
+  const body = $('#ph-body'), foot = $('#ph-foot'); if (!body || !foot) return;
+  const warn = s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : '';
+  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.plan ? 'ملف ثاني' : 'اختار الملف'}<input type="file" id="ph-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
+  if (!st.customers.length) {
+    body.innerHTML = `<div class="empty">${ic('users')}<span>ماكو زبائن بالتطبيق. استورد الملف من «استيراد من إكسل»، والأرقام اللي بي تدخل وياه.</span></div>`;
+    foot.innerHTML = `<button class="btn btn-primary grow" data-act="import">${ic('doc')}استيراد من إكسل</button>`;
+    return;
+  }
+  if (s.reading) { body.innerHTML = `<div class="empty"><div class="spin" role="status" aria-label="جاري القراءة"></div><span>جاري قراءة الملف…</span></div>`; foot.innerHTML = ''; return; }
+  if (!s.plan) {
+    body.innerHTML = `<p class="lead">اختار ملف الإكسل اللي بي عمود «الاسم» وعمود «الهاتف». كل رقم ينحفظ للزبون اللي بنفس الاسم بالتطبيق.</p>
+      <p class="note">${ic('info')}<span>الديون والحركات ما تتغير، وما ينضاف زبون جديد. قبل الحفظ تشوف كل الأرقام.</span></p>${warn}`;
+    foot.innerHTML = pick(true);
+    return;
+  }
+  const P = s.plan, ups = [...P.update.values()].filter(u => !u.done);
+  const line = (k, v) => `<div class="kv"><span>${k}</span><span class="vals"><b>${v}</b></span></div>`;
+  let h = `<div>${line('أرقام تنحفظ', ups.length)}${P.same ? line('نفس الرقم الموجود', P.same) : ''}</div>`;
+  if (P.missing.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.missing.length, 'اسم واحد', 'اسمين', 'أسماء', 'اسم')} ما لكيته بالتطبيق، فرقمه ما ينحفظ: ${esc(P.missing.join('، '))}</span></div>`;
+  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} مو مضبوط وما ينحفظ: ${esc(P.bad.join('، '))}</span></div>`;
+  h += warn;
+  if (ups.length) h += `<div class="list">${ups.map(u => `<div class="imp-row"><span class="main"><b>${esc(u.cu.name)}</b><small>${[u.cu.note ? esc(u.cu.note) : '', u.cu.phone ? `يتبدل من <span dir="ltr">${esc(u.cu.phone)}</span>` : ''].filter(Boolean).join(' · ')}</small></span><span class="bal" dir="ltr">${esc(u.phone)}</span></div>`).join('')}</div>`;
+  body.innerHTML = h;
+  foot.innerHTML = s.busy
+    ? `<button class="btn btn-primary grow" id="ph-go" disabled>جاري الحفظ…</button>`
+    : `<button class="btn btn-primary grow" id="ph-go" data-act="ph-go" ${ups.length ? '' : 'disabled'}>${ic('check')}${ups.length ? `حفظ ${countAr(ups.length, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')}` : 'ماكو أرقام جديدة'}</button>${pick(false)}`;
+}
+async function readPhonesFile(file){
+  const s = sheetState; if (!s || s.kind !== 'phones' || !file || s.busy) return;
+  Object.assign(s, {file: file.name, plan: null, err: '', reading: true}); renderPhones();
+  try {
+    if (!window.XLSX) { try { await loadScript(XLSX_URL); } catch (err) { throw new Error('reader'); } }
+    const X = window.XLSX, found = findImportTable(X, X.read(await file.arrayBuffer(), {type: 'array'}), 'phone');
+    if (found) s.plan = planPhones(found);
+    else s.err = 'ما لكيت بالملف عمود «الاسم» ووياه عمود «الهاتف».';
+  } catch (err) {
+    console.warn(err);
+    s.err = err && err.message === 'reader' ? 'ما گدرت أحمّل قارئ الإكسل. تأكد من النت وجرّب مرة ثانية.' : 'ما انفتح الملف. تأكد إنه ملف إكسل (xlsx).';
+  }
+  s.reading = false;
+  if (sheetState === s) renderPhones();
+}
+async function runPhones(){
+  const s = sheetState; if (!s || s.kind !== 'phones' || !s.plan || s.busy) return;
+  const ups = [...s.plan.update.values()].filter(u => !u.done);
+  if (!ups.length) return;
+  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تحفظ.'; renderPhones(); return; }
+  s.busy = true; s.err = ''; renderPhones();
+  st.inflight++;
+  try {
+    // five customers per request keeps the security rules' document reads under Firestore's limit
+    for (let i = 0; i < ups.length; i += 5) {
+      const b = writeBatch(fs), part = ups.slice(i, i + 5);
+      for (const u of part) b.update(ref('customers', u.cu.id), {phone: u.phone});
+      await b.commit();
+      part.forEach(u => { u.done = true; });
+      const g = $('#ph-go'); if (g) g.textContent = `جاري الحفظ… ${Math.min(ups.length, i + 5)} من ${ups.length}`;
+    }
+    const total = [...s.plan.update.values()].length;
+    const lb = writeBatch(fs);
+    lb.set(doc(col('log')), Object.assign(logOf('phones', null), {count: total, file: s.file}));
+    await lb.commit();
+    closeSheet(); render();
+    toast(`انحفظ ${countAr(total, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} للزبائن`);
+  } catch (err) {
+    console.warn(err);
+    s.busy = false;
+    s.err = 'وكف الحفظ بالنص. اضغط «حفظ» مرة ثانية حتى يكمل الباقي.';
+    if (sheetState === s) renderPhones();
+    toastErr(err);
+  } finally { st.inflight--; }
+}
+
 /* ---------- more (owner) ---------- */
 function moreScreen(){
   const team = st.users.filter(u => u.role !== 'owner' && !u.removed), waiting = team.filter(u => !u.active && !u.code).length;
@@ -1110,6 +1218,7 @@ function moreScreen(){
       <button class="row" data-act="go" data-v="users"><span class="mi">${ic('shield')}</span><span class="main"><span class="name">الموظفين والصلاحيات</span><span class="sub">${waiting ? `<span class="pill wait">${countAr(waiting, 'واحد ينتظر التفعيل', 'اثنين ينتظرون التفعيل', 'ينتظرون التفعيل', 'ينتظرون التفعيل')}</span>` : countAr(team.length + 1, 'مستخدم واحد', 'مستخدمين اثنين', 'مستخدمين', 'مستخدم')}</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="go" data-v="settings"><span class="mi">${ic('store')}</span><span class="main"><span class="name">إعدادات المحل</span><span class="sub">الاسم والرقم اللي يطلعون بالرسائل</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="import"><span class="mi">${ic('doc')}</span><span class="main"><span class="name">استيراد من إكسل</span><span class="sub">أرصدة الدفتر الورقي، أو نسخة احتياطية</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="phones"><span class="mi">${ic('phone')}</span><span class="main"><span class="name">أرقام الهواتف من إكسل</span><span class="sub">تحفظ أرقام الزبائن بدون ما تتغير ديونهم</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="reset"><span class="mi danger">${ic('trash')}</span><span class="main"><span class="name">تصفير الدفتر</span><span class="sub">يشيل كل الزبائن والديون قبل ما تستورد ملف جديد</span></span>${ic('back', 'flip')}</button>
       ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">ثبّت التطبيق على الموبايل</span><span class="sub">حتى تطلع أيقونة محمود ناجي على الشاشة</span></span>${ic('back', 'flip')}</button>`}
     </div>`;
@@ -1141,11 +1250,12 @@ function logText(ev){
     case 'user_restored': return `${who} رجّع حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
     case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وأرصدتهم من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
+    case 'phones': return `${who} حفظ ${countAr(ev.count || 0, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} هواتف للزبائن من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
     case 'reset': return `${who} صفّر الدفتر وشال ${countAr(ev.customers || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} و${countAr(ev.entries || 0, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}`;
   }
   return '';
 }
-const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', user_removed: 'trash', user_restored: 'undo'};
+const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
@@ -1691,6 +1801,8 @@ const A = {
   'imp-go'(){ runImport(); },
   'reset'(){ if (me().role === 'owner') openReset(); },
   'rs-backup'(d, el){ resetBackup(el); },
+  'phones'(){ if (me().role === 'owner') openPhones(); },
+  'ph-go'(){ runPhones(); },
   'rs-go'(){ runReset(); },
   'f-type'(d){ const s = sheetState; s.type = d.v; if (d.v === 'pay') s.due = null; else if (!s.due) s.due = addDays($('#f-date').value || todayISO(), 30); $('#f-due').value = s.due || ''; s.err = ''; formSync(); },
   'f-cur'(d){ sheetState.cur = d.v; formatAmountInput($('#f-amount'), d.v); formSync(); },
@@ -1774,6 +1886,7 @@ document.addEventListener('input', ev => {
 document.addEventListener('change', ev => {
   const t = ev.target;
   if (t.id === 'imp-file') { const f = t.files && t.files[0]; t.value = ''; readImportFile(f); return; }
+  if (t.id === 'ph-file') { const f = t.files && t.files[0]; t.value = ''; readPhonesFile(f); return; }
   if (t.id === 'f-due') { sheetState.due = t.value || null; formSync(); return; }
   if (t.id === 'f-date') formSync();
 });
