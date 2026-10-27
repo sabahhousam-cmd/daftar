@@ -783,13 +783,15 @@ async function loadMonth(){
 }
 function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
 const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-async function exportExcel(btn){
+async function exportExcel(btn, fileName){
   if (btn) btn.disabled = true;
   toast('جاري تجهيز الملف…');
+  let ok = false;
   try {
     if (!window.XLSX) await loadScript(XLSX_URL);
     const X = window.XLSX;
-    const all = ents(await getDocs(col('entries')));
+    // entries cleared by «تصفير الدفتر» live in the backup taken before the reset, not in later files
+    const all = ents(await getDocs(col('entries'))).filter(e => !e.resetAt);
     const byC = {}; for (const e of all) (byC[e.cid] = byC[e.cid] || []).push(e);
     const r1 = [['الزبون', 'الهاتف', 'المنطقة / ملاحظة', 'الرصيد بالدينار', 'الرصيد بالدولار', 'حركات معلقة', 'موعد التسديد', 'الحالة']];
     for (const c of st.customers) {
@@ -810,7 +812,7 @@ async function exportExcel(btn){
     const out = X.write(wb, {bookType: 'xlsx', type: 'array'});
     const blob = new Blob([out], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const url = URL.createObjectURL(blob), a = document.createElement('a');
-    a.href = url; a.download = `دفتر-الديون-${todayISO()}.xlsx`;
+    a.href = url; a.download = fileName || `دفتر-الديون-${todayISO()}.xlsx`;
     document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
     if (me().role === 'owner') {
@@ -820,8 +822,10 @@ async function exportExcel(btn){
       render();
     }
     toast('نزل ملف الإكسل. خزنه بإيميلك');
+    ok = true;
   } catch (err) { toastErr(err); }
   finally { if (btn) btn.disabled = false; }
+  return ok;
 }
 
 /* ---------- import from Excel (owner): the paper book's balances, or a backup from this app ---------- */
@@ -977,6 +981,82 @@ async function runImport(){
   } finally { st.inflight--; }
 }
 
+/* ---------- reset (owner): clear every customer and debt before importing a new file ----------
+   Nothing is hard-deleted (the rules forbid it): customers are archived with a zero balance and
+   entries are marked deleted, after the owner has downloaded a full Excel backup. */
+function openReset(){
+  sheetState = {kind: 'reset', backed: false, busy: false, err: '', word: '', done: 0, total: 0};
+  openSheet(`${sheetHead('تصفير الدفتر', 'يشيل كل الزبائن والديون من التطبيق')}<div class="sheet-body" id="rs-body"></div><div class="sheet-foot" id="rs-foot"></div>`, renderReset);
+}
+function renderReset(){
+  const s = sheetState; if (!s || s.kind !== 'reset') return;
+  const body = $('#rs-body'), foot = $('#rs-foot'); if (!body || !foot) return;
+  const n = st.customers.length;
+  if (!n && !s.busy) {
+    body.innerHTML = `<div class="empty">${ic('check')}<span>ماكو زبائن ولا ديون بالتطبيق. تكدر تستورد ملفك مباشرة.</span></div>`;
+    foot.innerHTML = `<button class="btn btn-primary grow" data-act="import">${ic('doc')}استيراد من إكسل</button>`;
+    return;
+  }
+  const t = totals(), ready = s.backed && !s.busy;
+  body.innerHTML = `<div>
+      <div class="kv"><span>الزبائن</span><b>${n}</b></div>
+      <div class="kv"><span>المطلوب بالدينار</span>${amt(t.IQD, 'IQD')}</div>
+      <div class="kv"><span>المطلوب بالدولار</span>${amt(t.USD, 'USD')}</div></div>
+    <p class="note">${ic('info')}<span>كل هذا ينشال. الموظفين والإعدادات وسجل الحركات يبقون، وما تنرسل رسائل للزبائن.</span></p>
+    <div class="step${s.backed ? ' done' : ''}"><b>١. نزّل نسخة احتياطية</b><span>ملف إكسل بكل الديون الحالية. إذا احتجتها بعدين، تستوردها من «استيراد من إكسل».</span>
+      <button class="btn ${s.backed ? 'btn-ghost' : 'btn-primary'} block" data-act="rs-backup" ${s.busy ? 'disabled' : ''}>${ic(s.backed ? 'check' : 'download')}${s.backed ? 'نزلت النسخة' : 'نزّل النسخة'}</button></div>
+    <div class="step${s.backed ? '' : ' off'}"><b>٢. اكتب «امسح» حتى تأكد</b>
+      <input class="input" id="rs-word" autocomplete="off" placeholder="امسح" value="${esc(s.word)}" ${ready ? '' : 'disabled'}></div>
+    ${s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : ''}`;
+  foot.innerHTML = `<button class="btn btn-danger grow" id="rs-go" data-act="rs-go" ${ready ? '' : 'disabled'}>${ic('trash')}${s.busy ? `جاري المسح… ${s.done} من ${s.total}` : 'امسح كل الديون'}</button>`;
+}
+function resetProgress(){ const s = sheetState, b = $('#rs-go'); if (s && b) b.textContent = `جاري المسح… ${s.done} من ${s.total}`; }
+async function resetBackup(btn){
+  const s = sheetState; if (!s || s.kind !== 'reset' || s.busy) return;
+  const ok = await exportExcel(btn, `دفتر-الديون-قبل-التصفير-${todayISO()}.xlsx`);
+  if (!ok || sheetState !== s) return;
+  s.backed = true; s.err = ''; renderReset();
+  const w = $('#rs-word'); if (w) w.focus({preventScroll: true});
+}
+async function runReset(){
+  const s = sheetState; if (!s || s.kind !== 'reset' || s.busy || !s.backed) return;
+  if (norm(s.word) !== norm('امسح')) { s.err = 'اكتب كلمة «امسح» بالمربع حتى يمسح.'; renderReset(); return; }
+  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تمسح.'; renderReset(); return; }
+  Object.assign(s, {busy: true, err: '', done: 0, total: 0}); renderReset();
+  const m = me(), now = Date.now();
+  st.inflight++;
+  try {
+    const [cs, es] = await Promise.all([getDocsFromServer(col('customers')), getDocsFromServer(col('entries'))]);
+    const ops = [];
+    cs.forEach(d => { if (!d.data().archived) ops.push({k: 'c', id: d.id}); });
+    es.forEach(d => { const e = d.data(); if (e.status !== 'deleted') ops.push({k: 'e', id: d.id, status: e.status}); });
+    const nC = ops.filter(o => o.k === 'c').length, nE = ops.length - nC;
+    s.total = ops.length; resetProgress();
+    // five documents per request keeps the security rules' document reads under Firestore's per-request limit
+    for (let i = 0; i < ops.length; i += 5) {
+      const b = writeBatch(fs);
+      for (const o of ops.slice(i, i + 5)) {
+        if (o.k === 'c') b.update(ref('customers', o.id), {archived: true, archivedAt: now, archivedBy: m.id, bal: {IQD: 0, USD: 0}, due: null});
+        else b.update(ref('entries', o.id), {status: 'deleted', prevStatus: o.status, deletedBy: m.id, deletedAt: now, resetAt: now});
+      }
+      await b.commit();
+      s.done = Math.min(ops.length, i + 5); resetProgress();
+    }
+    const lb = writeBatch(fs);
+    lb.set(doc(col('log')), Object.assign(logOf('reset', null), {customers: nC, entries: nE}));
+    await lb.commit();
+    closeSheet();
+    go({tab: 'customers', view: null, q: '', filter: 'all'});
+    toast('انمسحت كل الديون. هسه تكدر تستورد الملف الجديد');
+  } catch (err) {
+    console.warn(err);
+    s.busy = false;
+    s.err = `وكف المسح بعد ${s.done} من ${s.total}. اضغط «امسح كل الديون» مرة ثانية حتى يكمل.`;
+    if (sheetState === s) renderReset();
+    toastErr(err);
+  } finally { st.inflight--; }
+}
+
 /* ---------- more (owner) ---------- */
 function moreScreen(){
   const team = st.users.filter(u => u.role !== 'owner'), waiting = team.filter(u => !u.active && !u.code).length;
@@ -987,6 +1067,7 @@ function moreScreen(){
       <button class="row" data-act="go" data-v="users"><span class="mi">${ic('shield')}</span><span class="main"><span class="name">الموظفين والصلاحيات</span><span class="sub">${waiting ? `<span class="pill wait">${countAr(waiting, 'واحد ينتظر التفعيل', 'اثنين ينتظرون التفعيل', 'ينتظرون التفعيل', 'ينتظرون التفعيل')}</span>` : countAr(team.length + 1, 'مستخدم واحد', 'مستخدمين اثنين', 'مستخدمين', 'مستخدم')}</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="go" data-v="settings"><span class="mi">${ic('store')}</span><span class="main"><span class="name">إعدادات المحل</span><span class="sub">الاسم والرقم اللي يطلعون بالرسائل</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="import"><span class="mi">${ic('doc')}</span><span class="main"><span class="name">استيراد من إكسل</span><span class="sub">أرصدة الدفتر الورقي، أو نسخة احتياطية</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="reset"><span class="mi danger">${ic('trash')}</span><span class="main"><span class="name">تصفير الدفتر</span><span class="sub">يشيل كل الزبائن والديون قبل ما تستورد ملف جديد</span></span>${ic('back', 'flip')}</button>
       ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">ثبّت التطبيق على الموبايل</span><span class="sub">حتى تطلع أيقونة محمود ناجي على الشاشة</span></span>${ic('back', 'flip')}</button>`}
     </div>`;
 }
@@ -1015,10 +1096,11 @@ function logText(ev){
     case 'user_active': return `${who} ${ev.active ? 'فعّل' : 'أوقف'} حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
     case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وأرصدتهم من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
+    case 'reset': return `${who} صفّر الدفتر وشال ${countAr(ev.customers || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} و${countAr(ev.entries || 0, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}`;
   }
   return '';
 }
-const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc'};
+const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
@@ -1318,7 +1400,8 @@ function startData(){
   dataSubs.push(onSnapshot(ref('meta', 'shop'), snap => { if (snap.exists()) st.shop = Object.assign({}, SHOP_DEFAULT, snap.data()); render(); }, onSubErr));
   dataSubs.push(onSnapshot(col('customers'), snap => {
     const L = []; snap.forEach(d => L.push(Object.assign({id: d.id}, d.data())));
-    st.customers = L; st.custById = Object.fromEntries(L.map(c => [c.id, c])); st.custReady = true; render();
+    // archived customers (cleared by «تصفير الدفتر») stay in custById for names in the log, and leave every list
+    st.custById = Object.fromEntries(L.map(c => [c.id, c])); st.customers = L.filter(c => !c.archived); st.custReady = true; render();
   }, onSubErr));
   dataSubs.push(onSnapshot(query(col('entries'), where('status', '==', 'pending')), snap => { st.pending = ents(snap); render(); }, onSubErr));
 }
@@ -1476,6 +1559,9 @@ const A = {
   'export'(d, el){ exportExcel(el); },
   'import'(){ if (me().role === 'owner') openImport(); },
   'imp-go'(){ runImport(); },
+  'reset'(){ if (me().role === 'owner') openReset(); },
+  'rs-backup'(d, el){ resetBackup(el); },
+  'rs-go'(){ runReset(); },
   'f-type'(d){ const s = sheetState; s.type = d.v; if (d.v === 'pay') s.due = null; else if (!s.due) s.due = addDays($('#f-date').value || todayISO(), 30); $('#f-due').value = s.due || ''; s.err = ''; formSync(); },
   'f-cur'(d){ sheetState.cur = d.v; formatAmountInput($('#f-amount'), d.v); formSync(); },
   'f-due'(d){ const n = Number(d.d); sheetState.due = n ? addDays($('#f-date').value || todayISO(), n) : null; $('#f-due').value = sheetState.due || ''; formSync(); },
@@ -1533,6 +1619,7 @@ document.addEventListener('input', ev => {
   if (t.id === 'f-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; formSync(); return; }
   if (t.dataset && t.dataset.money) { formatAmountInput(t, t.dataset.money); return; }
   if (t.id === 'c-open') { formatAmountInput(t, sheetState.openCur); return; }
+  if (t.id === 'rs-word') { if (sheetState) { sheetState.word = t.value; sheetState.err = ''; } return; }
   if (t.id && t.closest('#app')) t.dataset.dirty = '1';
 });
 document.addEventListener('change', ev => {

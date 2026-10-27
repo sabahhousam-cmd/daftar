@@ -241,13 +241,19 @@ button{-webkit-tap-highlight-color:transparent}
 .about b{font-family:var(--font-display);font-size:18px;font-weight:600;display:block}
 .about small{color:var(--muted);font-size:13px}
 .mi{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:var(--paper);border:1px solid var(--rule);flex:none}
+.mi.danger{color:var(--debt);background:var(--debt-soft);border-color:transparent}
+.step{display:flex;flex-direction:column;gap:8px;border:1px solid var(--rule);border-radius:var(--r-md);padding:12px 14px}
+.step > b{font-size:15px}
+.step > span{font-size:13px;color:var(--muted);line-height:1.55}
+.step.done{background:var(--pay-soft);border-color:transparent}
+.step.off{opacity:.5}
 .day-h{font-size:12.5px;font-weight:600;color:var(--muted);margin:4px 2px -4px}
 .ev{display:flex;gap:12px;align-items:flex-start;padding:12px 14px}
 .ev + .ev{border-top:1px solid var(--rule)}
 .ev-ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--paper);border:1px solid var(--rule);color:var(--muted)}
 .ev-ic .ic{width:15px;height:15px}
 .ev-ic.approve{background:var(--pay-soft);color:var(--pay);border-color:transparent}
-.ev-ic.reject,.ev-ic.delete{background:var(--debt-soft);color:var(--debt);border-color:transparent}
+.ev-ic.reject,.ev-ic.delete,.ev-ic.reset{background:var(--debt-soft);color:var(--debt);border-color:transparent}
 .ev-ic.create{background:var(--wait-soft);color:var(--wait);border-color:transparent}
 .ev-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .ev-body p{margin:0;font-size:14px;line-height:1.5}
