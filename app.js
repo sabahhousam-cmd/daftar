@@ -370,11 +370,13 @@ function userWrite(u, data, logExtra){
 
 /* ---------- WhatsApp messages ---------- */
 function balMsg(b){ const parts = []; for (const cur of ['IQD', 'USD']) if (b[cur] > 0) parts.push(amtMsg(b[cur], cur)); return parts.join(' و '); }
+// an opening balance carries the book page and the owner's own notes (e.g. «لازم تدقيق»): those stay inside the app
+const custNote = e => e.opening ? 'رصيد سابق' : e.note;
 const shopTail = () => st.shop.phone ? `\nللاستفسار: ${st.shop.phone}` : '';
 function msgDebt(e, b){
   const c = cust(e.cid) || {name: ''};
   const L = [`مرحباً ${c.name}`, `تم تسجيل دين جديد على حسابك لدى ${st.shop.name}:`];
-  if (e.note) L.push(`المادة: ${e.note}`);
+  if (custNote(e)) L.push(`المادة: ${custNote(e)}`);
   L.push(`المبلغ: ${amtMsg(e.amount, e.cur)}`, `التاريخ: ${fmtDate(e.date, true)}`);
   if (e.due) L.push(`موعد التسديد: ${fmtDate(e.due, true)}`);
   L.push(`رصيدك الكلي: ${balMsg(b) || 'لا يوجد'}`, 'شكراً لتعاملكم معنا');
@@ -397,7 +399,7 @@ function msgRemind(cid){
 function msgStatement(cid){
   const c = cust(cid), list = (custList(cid) || []).filter(e => e.status === 'approved').sort(sortChrono).slice(-10);
   const L = [`كشف حساب ${c.name} لدى ${st.shop.name}`, ''];
-  for (const e of list) { const d = parseISO(e.date); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtMsg(e.amount, e.cur)}${e.note ? ' (' + e.note + ')' : ''}`); }
+  for (const e of list) { const d = parseISO(e.date), n = custNote(e); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtMsg(e.amount, e.cur)}${n ? ' (' + n + ')' : ''}`); }
   const bt = balMsg(bal(cid));
   L.push('', bt ? `الرصيد المطلوب: ${bt}` : 'الحساب مسدد بالكامل.');
   return L.join('\n') + shopTail();
@@ -837,7 +839,8 @@ const IMPORT_COLS = {
   IQD: ['دينار', 'الرصيد بالدينار'],
   USD: ['دولار', 'الرصيد بالدولار'],
   due: ['موعد التسديد'],
-  page: ['الصفحة']
+  page: ['الصفحة'],
+  memo: ['ملاحظة', 'ملاحظات', 'التفاصيل', 'تفاصيل']
 };
 const custKey = (name, note) => `${norm(name)}|${norm(note || '')}`;
 function findImportTable(X, wb){
@@ -868,7 +871,7 @@ function parseImport(found){
     const IQD = money(cell(row, c.IQD), 'IQD'), USD = money(cell(row, c.USD), 'USD');
     if (isNaN(IQD) || isNaN(USD)) { bad.push(name); continue; }
     const note = text(cell(row, c.note)), due = text(cell(row, c.due)), key = custKey(name, note);
-    out.push({name, note, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)),
+    out.push({name, note, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)), memo: text(cell(row, c.memo)),
       due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, skip: have.has(key) ? 'app' : seen.has(key) ? 'file' : ''});
     seen.add(key);
   }
@@ -902,6 +905,8 @@ function renderImport(){
   let h = `<div>${line('زبائن ينضافون', `<b>${add.length}</b>`)}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
     ${skipped ? line('موجودين أصلاً، ما ينضافون', `<b>${skipped}</b>`) : ''}</div>`;
   if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')} مبلغه مو مفهوم وما ينضاف: ${esc(P.bad.join('، '))}</span></div>`;
+  // importing over an existing book adds to it; to make the app match the file, the book is cleared first
+  if (st.customers.length && !s.busy) h += `<div class="warnbox soft">${ic('info')}<span>التطبيق بي ${countAr(st.customers.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} هسه، والملف ينضاف عليهم. حتى يصير التطبيق مثل الملف بالضبط، صفّر الدفتر أول.</span></div><button class="btn btn-ghost block" data-act="reset">${ic('trash')}تصفير الدفتر</button>`;
   h += warn;
   h += `<div class="list">${P.rows.map(r => {
     const amts = ['IQD', 'USD'].filter(cur => r[cur]).map(cur => amt(Math.abs(r[cur]), cur, r[cur] > 0 ? 'owe' : 'cred')).join('');
@@ -909,6 +914,7 @@ function renderImport(){
     if (r.skip) sub.push(`<span class="pill off">${r.skip === 'app' ? 'موجود' : 'مكرر بالملف'}</span>`);
     if (r.note) sub.push(esc(r.note));
     if (r.phone) sub.push(`<span dir="ltr">${esc(r.phone)}</span>`);
+    if (r.memo) sub.push(esc(r.memo));
     return `<div class="imp-row${r.skip ? ' skip' : ''}"><span class="main"><b>${esc(r.name)}</b>${sub.length ? `<small>${sub.join(' · ')}</small>` : ''}</span><span class="bal">${amts || '<span class="pill ok">مسدد</span>'}</span></div>`;
   }).join('')}</div>`;
   h += `<p class="note">${ic('info')}<span>كل رصيد ينكتب بكشف الزبون باسم «${P.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر'}»، وتكدر تعدّله أو تحذفه بعدين.</span></p>`;
@@ -955,7 +961,7 @@ async function runImport(){
       const v = r[cur]; if (!v) continue;
       seq++; sum[cur] = r2(sum[cur] + v);
       b.set(doc(col('entries')), {cid: cref.id, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`, type: v > 0 ? 'debt' : 'pay', amount: Math.abs(v), cur,
-        note: base + (r.page ? ` — ص${r.page}` : ''), date: today, due: v > 0 ? (r.due || null) : null, by: m.id, at: t, serverAt: serverTimestamp(),
+        note: base + (r.page ? ` — ص${r.page}` : '') + (r.memo ? ` — ${r.memo}` : ''), date: today, due: v > 0 ? (r.due || null) : null, by: m.id, at: t, serverAt: serverTimestamp(),
         status: 'approved', approvedBy: m.id, approvedAt: t, edits: [], opening: true});
     }
     b.update(ref('users', m.id), {seq});
