@@ -845,42 +845,47 @@ const IMPORT_COLS = {
 const custKey = (name, note) => `${norm(name)}|${norm(note || '')}`;
 function findImportTable(X, wb){
   for (const sn of wb.SheetNames) {
-    const rows = X.utils.sheet_to_json(wb.Sheets[sn], {header: 1, raw: true, defval: ''});
+    const ws = wb.Sheets[sn];
+    if (!ws['!ref']) continue;
+    const rows = X.utils.sheet_to_json(ws, {header: 1, raw: true, defval: '', blankrows: true});
+    const top = X.utils.decode_range(ws['!ref']).s.r;
     for (let h = 0; h < Math.min(rows.length, 30); h++) {
       const heads = rows[h].map(v => norm(v));
       const c = {};
       for (const k of Object.keys(IMPORT_COLS)) { const i = IMPORT_COLS[k].map(a => heads.indexOf(norm(a))).find(x => x >= 0); c[k] = i === undefined ? -1 : i; }
-      if (c.name >= 0 && (c.IQD >= 0 || c.USD >= 0)) return {c, rows: rows.slice(h + 1), backup: heads.includes(norm('الرصيد بالدينار'))};
+      if (c.name >= 0 && (c.IQD >= 0 || c.USD >= 0)) return {c, rows: rows.slice(h + 1), start: top + h + 2, backup: heads.includes(norm('الرصيد بالدينار'))};
     }
   }
   return null;
 }
+// Every line of the file goes in as written. A second line with the same name and area is the same
+// customer: it adds its own opening entry to that customer instead of being dropped.
 function parseImport(found){
-  const {c, rows, backup} = found, out = [], bad = [];
+  const {c, rows, start, backup} = found, out = [], bad = [];
   const have = new Set(st.customers.map(x => custKey(x.name, x.note))), seen = new Set();
   const cell = (row, i) => i >= 0 && row[i] != null ? row[i] : '';
   const text = v => String(v).trim().replace(/\s+/g, ' ');
-  const money = (v, cur) => {
-    if (v === '') return 0;
-    const n = typeof v === 'number' ? v : parseAmount(String(v));
-    return isFinite(n) ? (cur === 'IQD' ? Math.round(n) : r2(n)) : NaN;
+  // a cell holds a number, or text such as «150 ألف», «1.5 مليون» or «200$»
+  const money = v => {
+    if (typeof v === 'number') return {n: v, usd: false};
+    const s = toLatin(String(v)).trim();
+    if (!s) return {n: 0, usd: false};
+    const mult = /مليون/.test(s) ? 1e6 : /[أا]لف/.test(s) ? 1e3 : 1;
+    const n = parseAmount(s.replace(/\$|دولار|دينار|د\.ع|مليون|[أا]لف/g, ''));
+    return {n: isFinite(n) ? n * mult : NaN, usd: /\$|دولار/.test(s)};
   };
-  for (const row of rows) {
-    const name = text(cell(row, c.name));
-    if (!name || norm(name) === norm('المجموع')) continue;
-    const IQD = money(cell(row, c.IQD), 'IQD'), USD = money(cell(row, c.USD), 'USD');
-    if (isNaN(IQD) || isNaN(USD)) { bad.push(name); continue; }
+  rows.forEach((row, i) => {
+    const name = text(cell(row, c.name)), a = money(cell(row, c.IQD)), d = money(cell(row, c.USD));
+    if (!name) { if (a.n || d.n) bad.push(`السطر ${start + i} بدون اسم`); return; }
+    if (norm(name) === norm('المجموع')) return;
+    if (isNaN(a.n) || isNaN(d.n)) { bad.push(name); return; }
+    const IQD = Math.round(a.usd ? 0 : a.n), USD = r2(d.n + (a.usd ? a.n : 0));
     const note = text(cell(row, c.note)), due = text(cell(row, c.due)), key = custKey(name, note);
-    out.push({name, note, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)), memo: text(cell(row, c.memo)),
-      due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, skip: have.has(key) ? 'app' : seen.has(key) ? 'file' : ''});
+    out.push({name, note, key, phone: text(cell(row, c.phone)), IQD, USD, page: text(cell(row, c.page)), memo: text(cell(row, c.memo)),
+      due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, skip: have.has(key) ? 'app' : '', extra: !have.has(key) && seen.has(key)});
     seen.add(key);
-  }
+  });
   return {rows: out, bad, backup};
-}
-// after a partial import, the rows that made it in are marked so they are never written twice
-function refreshSkips(P){
-  const have = new Set(st.customers.map(x => custKey(x.name, x.note)));
-  for (const r of P.rows) if (r.skip !== 'file' && have.has(custKey(r.name, r.note))) r.skip = 'app';
 }
 function openImport(){
   sheetState = {kind: 'import', file: '', parsed: null, busy: false, err: ''};
@@ -898,11 +903,12 @@ function renderImport(){
     foot.innerHTML = pick(true);
     return;
   }
-  const P = s.parsed, add = P.rows.filter(r => !r.skip), skipped = P.rows.length - add.length;
+  const P = s.parsed, todo = P.rows.filter(r => !r.skip && !r.done), skipped = P.rows.filter(r => r.skip).length;
+  const custs = todo.filter(r => !r.extra).length, extras = todo.length - custs;
   const sum = {IQD: 0, USD: 0};
-  for (const r of add) { sum.IQD += r.IQD; sum.USD = r2(sum.USD + r.USD); }
+  for (const r of todo) { sum.IQD += r.IQD; sum.USD = r2(sum.USD + r.USD); }
   const line = (k, v) => `<div class="kv"><span>${k}</span><span class="vals">${v}</span></div>`;
-  let h = `<div>${line('زبائن ينضافون', `<b>${add.length}</b>`)}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
+  let h = `<div>${line('زبائن ينضافون', `<b>${custs}</b>`)}${extras ? line('أسطر ثانية لنفس الزبون', `<b>${extras}</b>`) : ''}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
     ${skipped ? line('موجودين أصلاً، ما ينضافون', `<b>${skipped}</b>`) : ''}</div>`;
   if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')} مبلغه مو مفهوم وما ينضاف: ${esc(P.bad.join('، '))}</span></div>`;
   // importing over an existing book adds to it; to make the app match the file, the book is cleared first
@@ -911,17 +917,20 @@ function renderImport(){
   h += `<div class="list">${P.rows.map(r => {
     const amts = ['IQD', 'USD'].filter(cur => r[cur]).map(cur => amt(Math.abs(r[cur]), cur, r[cur] > 0 ? 'owe' : 'cred')).join('');
     const sub = [];
-    if (r.skip) sub.push(`<span class="pill off">${r.skip === 'app' ? 'موجود' : 'مكرر بالملف'}</span>`);
+    if (r.skip) sub.push('<span class="pill off">موجود</span>');
+    else if (r.done) sub.push('<span class="pill ok">انضاف</span>');
+    else if (r.extra) sub.push('<span class="pill soon">ينضاف لنفس الزبون</span>');
     if (r.note) sub.push(esc(r.note));
     if (r.phone) sub.push(`<span dir="ltr">${esc(r.phone)}</span>`);
     if (r.memo) sub.push(esc(r.memo));
-    return `<div class="imp-row${r.skip ? ' skip' : ''}"><span class="main"><b>${esc(r.name)}</b>${sub.length ? `<small>${sub.join(' · ')}</small>` : ''}</span><span class="bal">${amts || '<span class="pill ok">مسدد</span>'}</span></div>`;
+    return `<div class="imp-row${r.skip || r.done ? ' skip' : ''}"><span class="main"><b>${esc(r.name)}</b>${sub.length ? `<small>${sub.join(' · ')}</small>` : ''}</span><span class="bal">${amts || '<span class="pill ok">مسدد</span>'}</span></div>`;
   }).join('')}</div>`;
   h += `<p class="note">${ic('info')}<span>كل رصيد ينكتب بكشف الزبون باسم «${P.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر'}»، وتكدر تعدّله أو تحذفه بعدين.</span></p>`;
   body.innerHTML = h;
+  const label = custs ? `استيراد ${countAr(custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}` : todo.length ? `استيراد ${countAr(todo.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')}` : 'ماكو زبائن جدد';
   foot.innerHTML = s.busy
     ? `<button class="btn btn-primary grow" id="imp-go" disabled>جاري الاستيراد…</button>`
-    : `<button class="btn btn-primary grow" id="imp-go" data-act="imp-go" ${add.length ? '' : 'disabled'}>${ic('check')}${add.length ? `استيراد ${countAr(add.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}` : 'ماكو زبائن جدد'}</button>${pick(false)}`;
+    : `<button class="btn btn-primary grow" id="imp-go" data-act="imp-go" ${todo.length ? '' : 'disabled'}>${ic('check')}${label}</button>${pick(false)}`;
 }
 async function readImportFile(file){
   const s = sheetState; if (!s || s.kind !== 'import' || !file || s.busy) return;
@@ -942,46 +951,63 @@ async function readImportFile(file){
 }
 async function runImport(){
   const s = sheetState; if (!s || s.kind !== 'import' || !s.parsed || s.busy) return;
-  refreshSkips(s.parsed);
-  const add = s.parsed.rows.filter(r => !r.skip);
-  if (!add.length) { renderImport(); return; }
+  const rows = s.parsed.rows, todo = rows.filter(r => !r.skip && !r.done);
+  if (!todo.length) { renderImport(); return; }
   if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تستورد.'; renderImport(); return; }
   s.busy = true; s.err = ''; renderImport();
-  const m = me(), now = Date.now(), today = todayISO(), sum = {IQD: 0, USD: 0};
+  const m = me(), now = Date.now(), today = todayISO();
+  const tally = s.tally || (s.tally = {custs: 0, IQD: 0, USD: 0});
   const base = s.parsed.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر';
+  const heads = new Map(); for (const r of rows) if (!r.skip && !r.extra) heads.set(r.key, r);
   let seq = m.seq || 0, done = 0;
-  const progress = () => { const b = $('#imp-go'); if (b) b.textContent = `جاري الاستيراد… ${done} من ${add.length}`; };
+  const progress = () => { const b = $('#imp-go'); if (b) b.textContent = `جاري الاستيراد… ${done} من ${todo.length}`; };
   progress();
-  // One small batch per customer, so the security rules' per-request document reads stay well under Firestore's limit.
-  const jobs = add.map((r, i) => {
-    const t = now - i, b = writeBatch(fs), cref = doc(col('customers'));
-    b.set(cref, {name: r.name, phone: r.phone, note: r.note, limitIQD: 0, limitUSD: 0, createdAt: t, createdBy: m.id,
-      bal: {IQD: r.IQD, USD: r.USD}, due: (r.IQD > 0 || r.USD > 0) && r.due ? r.due : null, lastAt: t, imported: true});
+  // One small batch per line (the customer, or another line of the same customer, with its opening entries),
+  // so the security rules' per-request document reads stay under Firestore's limit. The SDK sends batches in order.
+  const jobs = todo.map((r, i) => {
+    const head = heads.get(r.key), t = now - i, b = writeBatch(fs);
+    if (!head.cid) head.cid = doc(col('customers')).id;
+    if (r === head) {
+      b.set(ref('customers', head.cid), {name: r.name, phone: r.phone, note: r.note, limitIQD: 0, limitUSD: 0, createdAt: t, createdBy: m.id,
+        bal: {IQD: r.IQD, USD: r.USD}, due: (r.IQD > 0 || r.USD > 0) && r.due ? r.due : null, lastAt: t, imported: true});
+    } else {
+      const patch = {lastAt: t};
+      if (r.IQD) patch['bal.IQD'] = increment(r.IQD);
+      if (r.USD) patch['bal.USD'] = increment(r.USD);
+      if (r.phone && !head.phone) patch.phone = r.phone;
+      b.update(ref('customers', head.cid), patch);
+    }
     for (const cur of ['IQD', 'USD']) {
       const v = r[cur]; if (!v) continue;
-      seq++; sum[cur] = r2(sum[cur] + v);
-      b.set(doc(col('entries')), {cid: cref.id, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`, type: v > 0 ? 'debt' : 'pay', amount: Math.abs(v), cur,
+      seq++;
+      b.set(doc(col('entries')), {cid: head.cid, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`, type: v > 0 ? 'debt' : 'pay', amount: Math.abs(v), cur,
         note: base + (r.page ? ` — ص${r.page}` : '') + (r.memo ? ` — ${r.memo}` : ''), date: today, due: v > 0 ? (r.due || null) : null, by: m.id, at: t, serverAt: serverTimestamp(),
         status: 'approved', approvedBy: m.id, approvedAt: t, edits: [], opening: true});
     }
     b.update(ref('users', m.id), {seq});
-    return b.commit().then(() => { done++; progress(); });
+    return b.commit().then(() => {
+      r.done = true; done++; progress();
+      if (r === head) tally.custs++;
+      tally.IQD += r.IQD; tally.USD = r2(tally.USD + r.USD);
+    });
   });
   st.me = Object.assign({}, m, {seq});
   st.inflight++;
+  // a line whose batch did not go through is written again on the next press; finished lines are never written twice
+  const results = await Promise.allSettled(jobs);
   try {
-    await Promise.all(jobs);
+    const failed = results.find(x => x.status === 'rejected');
+    if (failed) throw failed.reason;
     const lb = writeBatch(fs);
-    lb.set(doc(col('log')), Object.assign(logOf('import', null), {count: add.length, sumIQD: sum.IQD, sumUSD: sum.USD, file: s.file}));
+    lb.set(doc(col('log')), Object.assign(logOf('import', null), {count: tally.custs, sumIQD: tally.IQD, sumUSD: tally.USD, file: s.file}));
     await lb.commit();
     closeSheet();
     go({tab: 'customers', view: null, q: '', filter: 'all'});
-    toast(`انضاف ${countAr(add.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وويا أرصدتهم`);
+    toast(`انضاف ${countAr(tally.custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وويا أرصدتهم`);
   } catch (err) {
     console.warn(err);
     s.busy = false;
-    s.err = `وكف الاستيراد بعد ${done} من ${add.length}. اضغط «استيراد» مرة ثانية، واللي انضافوا ما يتكررون.`;
-    refreshSkips(s.parsed);
+    s.err = `وكف الاستيراد بعد ${done} من ${todo.length}. اضغط «استيراد» مرة ثانية حتى يكمل الباقي، واللي انضاف ما يتكرر.`;
     if (sheetState === s) renderImport();
     toastErr(err);
   } finally { st.inflight--; }
