@@ -22,13 +22,13 @@ const fs = initializeFirestore(fbApp, {localCache: persistentLocalCache({tabMana
 /* ---------- constants ---------- */
 const ROLES = {owner: 'المدير', supervisor: 'مشرف', staff: 'موظف'};
 const PERMS = [
-  {k: 'balances', l: 'يشوف أرصدة كل الزبائن', s: 'رصيد كل زبون بالقائمة. بدونها يشوف رصيد الزبون اللي يفتحه بس.'},
-  {k: 'totals', l: 'يشوف مجموع الديون', s: 'المجموع فوك قائمة الزبائن، وفوك صفحة الشركات.'},
-  {k: 'companies', l: 'يشوف صفحة الشركات', s: 'حسابات الشركات، ويسجل قوائم وتسديدات تنتظر موافقتك.'},
-  {k: 'reports', l: 'التقارير وتنزيل الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
-  {k: 'edit', l: 'يعدّل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، وكل تعديل ينكتب بالسجل.'},
-  {k: 'customers', l: 'يعدّل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
-  {k: 'messages', l: 'يرسل رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. الرسالة تطلع من واتساب موبايله.'}
+  {k: 'balances', l: 'عرض أرصدة جميع الزبائن', s: 'رصيد كل زبون في القائمة. بدونها يظهر له رصيد الزبون الذي يفتحه فقط.'},
+  {k: 'totals', l: 'عرض مجموع الديون', s: 'المجموع أعلى قائمة الزبائن وأعلى صفحة الشركات.'},
+  {k: 'companies', l: 'عرض صفحة الشركات', s: 'حسابات الشركات، مع تسجيل قوائم ودفعات تنتظر موافقتك.'},
+  {k: 'reports', l: 'التقارير وتنزيل ملف الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
+  {k: 'edit', l: 'تعديل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، ويُسجَّل كل تعديل في السجل.'},
+  {k: 'customers', l: 'تعديل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
+  {k: 'messages', l: 'إرسال رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. تُرسل الرسالة من واتساب هاتفه.'}
 ];
 const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
 const PRESETS = {
@@ -38,7 +38,7 @@ const PRESETS = {
 // the database rules take a new staff account only with exactly these five, all off; «totals» and «companies»
 // came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
-const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وصلاحياتهم وشيل حساباتهم'];
+const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
 const CUR_WORD = {IQD: 'دينار', USD: 'دولار'};
 const MONTHS = ['كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران', 'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول'];
@@ -46,13 +46,13 @@ const MONTHS_SHORT = ['ك2', 'شباط', 'آذار', 'نيسان', 'أيار', '
 const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const STATUS = {approved: 'مقبولة', pending: 'بانتظار الموافقة', rejected: 'مرفوضة', deleted: 'محذوفة'};
 const SHOP_DEFAULT = {name: 'محمود ناجي', phone: '', nextCode: 2};
-// A company's account runs both ways. bal > 0: they owe us (نطلبهم); bal < 0: we owe them (يطلبونا).
+// A company's account runs both ways. bal > 0: they owe us (لنا); bal < 0: we owe them (علينا).
 // Invoices carry the invoice number and a due date; payments settle whichever side is open.
 const CO_TYPES = {
-  buy: {l: 'قائمة منهم', s: 'أخذنا منهم بضاعة بالدين', sign: -1, inv: true},
-  paid: {l: 'دفعنا لهم', s: 'دفعنا فلوس للشركة', sign: 1, inv: false},
-  sell: {l: 'قائمة إلهم', s: 'انطيناهم بضاعة بالدين', sign: 1, inv: true},
-  recv: {l: 'استلمنا منهم', s: 'الشركة دفعتلنا فلوس', sign: -1, inv: false}
+  buy: {l: 'قائمة شراء', s: 'استلمنا بضاعة بالآجل', sign: -1, inv: true},
+  paid: {l: 'دفعة مسددة', s: 'دفعنا مبلغاً للشركة', sign: 1, inv: false},
+  sell: {l: 'قائمة بيع', s: 'سلّمنا بضاعة بالآجل', sign: 1, inv: true},
+  recv: {l: 'دفعة مستلمة', s: 'استلمنا مبلغاً من الشركة', sign: -1, inv: false}
 };
 
 /* ---------- icons ---------- */
@@ -132,18 +132,19 @@ function fmtDate(iso, withYear){
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${showY ? ' ' + y : ''}`;
 }
 function fmtTime(ts){ const d = new Date(ts); let h = d.getHours(); const ap = h < 12 ? 'ص' : 'م'; h = h % 12 || 12; return `${h}:${pad(d.getMinutes())} ${ap}`; }
-function daysAr(n){ n = Math.abs(n); if (n === 1) return 'يوم'; if (n === 2) return 'يومين'; if (n <= 10) return `${n} أيام`; return `${n} يوم`; }
+// Arabic counting: 3–10 take the plural, 11–99 the singular with tanween («30 يوماً»), 100, 200… the plain singular («100 يوم»)
+function daysAr(n){ n = Math.abs(n); if (n === 1) return 'يوم'; if (n === 2) return 'يومين'; const r = n % 100; if (r >= 3 && r <= 10) return `${n} أيام`; if (r >= 11) return `${n} يوماً`; return `${n} يوم`; }
 function relDay(iso){ const diff = daysBetween(iso, todayISO()); if (diff === 0) return 'اليوم'; if (diff === 1) return 'أمس'; if (diff > 1 && diff < 30) return `قبل ${daysAr(diff)}`; return fmtDate(iso); }
 const fmtStamp = ts => { const iso = isoOf(new Date(ts)); const diff = daysBetween(iso, todayISO()); const day = diff === 0 ? 'اليوم' : diff === 1 ? 'أمس' : fmtDate(iso); return `${day}، ${fmtTime(ts)}`; };
 const stampISO = ts => { if (!ts) return ''; const d = new Date(ts); return `${isoOf(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-function countAr(n, one, two, few, many){ if (n === 1) return one; if (n === 2) return two; if (n >= 3 && n <= 10) return `${n} ${few}`; return `${n} ${many}`; }
+function countAr(n, one, two, few, many){ if (n === 1) return one; if (n === 2) return two; const r = n % 100; if (r >= 3 && r <= 10) return `${n} ${few}`; if (r >= 11) return `${n} ${many}`; return `${n} ${many.replace(/اً(?=\s|$)/g, '')}`; }
 function amountWords(n, cur){
   if (!(n > 0)) return '';
   if (cur === 'USD') return `${fmtNum(n, 'USD')} دولار`;
   n = Math.round(n);
   const m = Math.floor(n / 1e6), k = Math.floor((n % 1e6) / 1000), r = n % 1000, parts = [];
-  if (m) parts.push(m === 1 ? 'مليون' : m === 2 ? 'مليونين' : `${m.toLocaleString('en-US')} مليون`);
-  if (k) parts.push(k === 1 ? 'ألف' : k === 2 ? 'ألفين' : `${k} ألف`);
+  if (m) parts.push(m === 1 ? 'مليون' : m === 2 ? 'مليونان' : `${m.toLocaleString('en-US')} مليون`);
+  if (k) parts.push(k === 1 ? 'ألف' : k === 2 ? 'ألفان' : `${k} ألف`);
   if (r) parts.push(String(r));
   return parts.join(' و ') + ' دينار';
 }
@@ -303,9 +304,9 @@ function coTotals(){
 // one entry of either ledger: whose account it is and what it was
 const partyName = e => (e.coid ? (co(e.coid) || {}).name : (cust(e.cid) || {}).name) || '';
 const entryLabel = e => !e.coid ? (e.type === 'debt' ? 'دين' : 'تسديد')
-  : e.opening ? `رصيد سابق: ${coEffect(e) > 0 ? 'نطلبهم' : 'يطلبونا'}` : (CO_TYPES[e.type] || {}).l || '';
+  : e.opening ? `رصيد سابق: ${coEffect(e) > 0 ? 'لنا' : 'علينا'}` : (CO_TYPES[e.type] || {}).l || '';
 const isInvoice = e => e.coid ? !!(CO_TYPES[e.type] || {}).inv : e.type === 'debt';
-const coRunText = (v, cur) => v > 0 ? `نطلبهم ${amtText(v, cur)}` : v < 0 ? `يطلبونا ${amtText(-v, cur)}` : 'مصفّى';
+const coRunText = (v, cur) => v > 0 ? `لنا ${amtText(v, cur)}` : v < 0 ? `علينا ${amtText(-v, cur)}` : 'مسدّد';
 
 /* ---------- writes ---------- */
 const col = name => collection(fs, name);
@@ -536,21 +537,21 @@ function msgDebt(e, b){
   if (custNote(e)) L.push(`المادة: ${custNote(e)}`);
   L.push(`المبلغ: ${amtMsg(e.amount, e.cur)}`, `التاريخ: ${fmtDate(e.date, true)}`);
   if (e.due) L.push(`موعد التسديد: ${fmtDate(e.due, true)}`);
-  L.push(`رصيدك الكلي: ${balMsg(b) || 'لا يوجد'}`, 'شكراً لتعاملكم معنا');
+  L.push(`إجمالي رصيدك: ${balMsg(b) || 'لا يوجد'}`, 'شكراً لتعاملكم معنا');
   return L.join('\n') + shopTail();
 }
 function msgPay(e, b){
   const c = cust(e.cid) || {name: ''};
-  const L = [`مرحباً ${c.name}`, 'وصلنا تسديدك، شكراً لك.', `رقم الوصل: ${e.no}`, `المبلغ: ${amtMsg(e.amount, e.cur)}`, `التاريخ: ${fmtDate(e.date, true)}`];
+  const L = [`مرحباً ${c.name}`, 'تم استلام دفعتك، شكراً لك.', `رقم الوصل: ${e.no}`, `المبلغ: ${amtMsg(e.amount, e.cur)}`, `التاريخ: ${fmtDate(e.date, true)}`];
   const bt = balMsg(b);
-  L.push(bt ? `الباقي بذمتك: ${bt}` : 'حسابك مسدد بالكامل.', st.shop.name);
+  L.push(bt ? `المتبقي بذمتك: ${bt}` : 'حسابك مسدد بالكامل.', st.shop.name);
   return L.join('\n') + shopTail();
 }
 function msgRemind(cid){
   const c = cust(cid), d = dueInfo(cid);
-  const L = [`مرحباً ${c.name}`, `نذكرك بالمبلغ المطلوب بذمتك لدى ${st.shop.name}:`, balMsg(bal(cid))];
+  const L = [`مرحباً ${c.name}`, `نذكّرك بالمبلغ المستحق بذمتك لدى ${st.shop.name}:`, balMsg(bal(cid))];
   if (d) L.push(d.late ? `كان موعد التسديد ${fmtDate(d.due, true)}.` : `موعد التسديد ${fmtDate(d.due, true)}.`);
-  L.push('نرجو التسديد بأقرب وقت، وشكراً لك.');
+  L.push('نرجو التسديد في أقرب وقت، مع الشكر.');
   return L.join('\n') + shopTail();
 }
 // entries: the customer's entries when they are not the open customer's (the «send to all» list fetches them all at once)
@@ -559,7 +560,7 @@ function msgStatement(cid, entries){
   const L = [`كشف حساب ${c.name} لدى ${st.shop.name}`, ''];
   for (const e of list) { const d = parseISO(e.date), n = custNote(e); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtMsg(e.amount, e.cur)}${n ? ' (' + n + ')' : ''}`); }
   const bt = balMsg(entries ? summarize(entries).bal : bal(cid));
-  L.push('', bt ? `الرصيد المطلوب: ${bt}` : 'الحساب مسدد بالكامل.');
+  L.push('', bt ? `الرصيد المستحق: ${bt}` : 'الحساب مسدد بالكامل.');
   return L.join('\n') + shopTail();
 }
 function waPhone(phone){
@@ -586,64 +587,64 @@ function authView(){
   return `<section class="login">${iconImg()}
     <div class="brandname"><h1>دفتر الديون</h1><span>محمود ناجي</span></div>
     <form class="card" id="auth-form" novalidate>
-      <div class="seg" role="group" aria-label="نوع الدخول"><button type="button" data-act="auth-mode" data-v="login" aria-pressed="${!su}">دخول</button><button type="button" data-act="auth-mode" data-v="signup" aria-pressed="${su}">حساب جديد</button></div>
-      ${su ? '<div class="field"><label for="a-name">اسمك</label><input class="input" id="a-name" name="name" autocomplete="name"></div>' : ''}
-      <div class="field"><label for="a-email">الإيميل</label><input class="input" id="a-email" name="username" type="email" dir="ltr" autocomplete="username" inputmode="email" value="${su ? '' : esc(savedEmail())}"></div>
-      <div class="field"><label for="a-pass">الباسورد</label><input class="input" id="a-pass" name="password" type="password" dir="ltr" autocomplete="${su ? 'new-password' : 'current-password'}"></div>
+      <div class="seg" role="group" aria-label="نوع الدخول"><button type="button" data-act="auth-mode" data-v="login" aria-pressed="${!su}">تسجيل الدخول</button><button type="button" data-act="auth-mode" data-v="signup" aria-pressed="${su}">حساب جديد</button></div>
+      ${su ? '<div class="field"><label for="a-name">الاسم</label><input class="input" id="a-name" name="name" autocomplete="name"></div>' : ''}
+      <div class="field"><label for="a-email">البريد الإلكتروني</label><input class="input" id="a-email" name="username" type="email" dir="ltr" autocomplete="username" inputmode="email" value="${su ? '' : esc(savedEmail())}"></div>
+      <div class="field"><label for="a-pass">كلمة المرور</label><input class="input" id="a-pass" name="password" type="password" dir="ltr" autocomplete="${su ? 'new-password' : 'current-password'}"></div>
       <div id="a-warn"></div>
-      <button class="btn btn-primary block" id="a-submit" type="submit">${su ? 'سوّي حساب' : 'دخول'}</button>
-      ${su ? '' : '<button type="button" class="linkbtn" data-act="forgot">نسيت الباسورد؟</button>'}
+      <button class="btn btn-primary block" id="a-submit" type="submit">${su ? 'إنشاء الحساب' : 'تسجيل الدخول'}</button>
+      ${su ? '' : '<button type="button" class="linkbtn" data-act="forgot">نسيت كلمة المرور؟</button>'}
     </form>
-    <p class="fineprint">${su ? 'بعد ما تسوي حسابك، المدير يفعّله ويختار صلاحياتك.' : 'تدخل مرة وحدة بس. بعدها التطبيق يفتح وحده على هذا الموبايل.'}</p>
-    ${isStandalone() ? '' : '<button type="button" class="linkbtn" data-act="install">ثبّت التطبيق على الشاشة حتى يبقى الدخول محفوظ</button>'}
+    <p class="fineprint">${su ? 'بعد إنشاء حسابك، يقوم المدير بتفعيله وتحديد صلاحياتك.' : 'يكفي تسجيل الدخول مرة واحدة، وبعدها يفتح التطبيق تلقائياً على هذا الهاتف.'}</p>
+    ${isStandalone() ? '' : '<button type="button" class="linkbtn" data-act="install">ثبّت التطبيق على الشاشة الرئيسية ليبقى تسجيل الدخول محفوظاً</button>'}
   </section>`;
 }
 function verifyView(){
   const email = (auth.currentUser || {}).email || '';
   return `<section class="login">${iconImg()}
-    <div class="brandname"><h1>أكّد إيميلك</h1><span dir="ltr">${esc(email)}</span></div>
-    <div class="card"><p>دزينا رابط تأكيد على إيميلك. افتح الإيميل واضغط الرابط، وبعدها ارجع هنا واضغط «أكدت». إذا ما لكيته، شوف مجلد Spam.</p>
+    <div class="brandname"><h1>تأكيد البريد الإلكتروني</h1><span dir="ltr">${esc(email)}</span></div>
+    <div class="card"><p>أرسلنا رابط تأكيد إلى بريدك الإلكتروني. افتح الرسالة واضغط على الرابط، ثم عد إلى هنا واضغط «تم التأكيد». إذا لم تجد الرسالة، تحقق من مجلد الرسائل غير المرغوب فيها (Spam).</p>
       <div id="v-warn"></div>
-      <button class="btn btn-primary block" data-act="verify-done">${ic('check')}أكدت</button>
-      <button class="btn btn-ghost block" data-act="verify-resend">دز الرابط مرة ثانية</button>
-      <button class="linkbtn" data-act="logout">خروج</button></div>
+      <button class="btn btn-primary block" data-act="verify-done">${ic('check')}تم التأكيد</button>
+      <button class="btn btn-ghost block" data-act="verify-resend">إعادة إرسال الرابط</button>
+      <button class="linkbtn" data-act="logout">تسجيل الخروج</button></div>
   </section>`;
 }
 function waitingView(){
   const m = st.me || {}, stopped = (m.code || 0) > 0;
-  const title = m.removed ? 'هذا الحساب انشال' : stopped ? 'حسابك موقوف' : 'حسابك ينتظر التفعيل';
-  const text = m.removed ? 'صاحب الدفتر شال هذا الحساب، فما يكدر يدخل للتطبيق.' : stopped ? 'المدير وقف حسابك. راجعه حتى يرجّعه.' : 'المدير لازم يفعّل حسابك من صفحة الموظفين. أول ما يفعّله، يفتح التطبيق هنا وحده.';
+  const title = m.removed ? 'تمت إزالة هذا الحساب' : stopped ? 'تم إيقاف حسابك' : 'حسابك بانتظار التفعيل';
+  const text = m.removed ? 'أزال صاحب الدفتر هذا الحساب، لذا لا يمكن الدخول إلى التطبيق.' : stopped ? 'أوقف المدير حسابك. يرجى مراجعته لإعادة تفعيله.' : 'يجب أن يفعّل المدير حسابك من صفحة الموظفين، وسيفتح التطبيق هنا تلقائياً بعد التفعيل.';
   return `<section class="login">${iconImg()}
     <div class="brandname"><h1>${title}</h1><span>${esc(m.name || '')}</span></div>
     <div class="card"><p>${text}</p>
-      <button class="btn btn-ghost block" data-act="logout">${ic('logout')}خروج</button></div>
+      <button class="btn btn-ghost block" data-act="logout">${ic('logout')}تسجيل الخروج</button></div>
   </section>`;
 }
 function rulesView(){
   return `<section class="login">${iconImg()}
-    <div class="brandname"><h1>التطبيق بعده ما تجهّز</h1></div>
-    <div class="card"><p>قواعد الحماية بعدها ما انضافت بـ Firebase. أول ما تنضاف، اضغط «حاول مرة ثانية».</p>
-      <button class="btn btn-primary block" data-act="reload">حاول مرة ثانية</button>
-      <button class="linkbtn" data-act="logout">خروج</button></div>
+    <div class="brandname"><h1>التطبيق غير جاهز بعد</h1></div>
+    <div class="card"><p>لم تُضف قواعد الحماية في Firebase بعد. بعد إضافتها، اضغط «إعادة المحاولة».</p>
+      <button class="btn btn-primary block" data-act="reload">إعادة المحاولة</button>
+      <button class="linkbtn" data-act="logout">تسجيل الخروج</button></div>
   </section>`;
 }
 function errorView(){
   return `<section class="login">${iconImg()}
-    <div class="brandname"><h1>صار خطأ</h1></div>
-    <div class="card"><p>تأكد من النت واضغط «حاول مرة ثانية».</p>${st.fatal ? `<p class="fineprint" dir="ltr">${esc(st.fatal)}</p>` : ''}
-      <button class="btn btn-primary block" data-act="reload">حاول مرة ثانية</button>
-      <button class="linkbtn" data-act="logout">خروج</button></div>
+    <div class="brandname"><h1>حدث خطأ</h1></div>
+    <div class="card"><p>تأكد من الاتصال بالإنترنت واضغط «إعادة المحاولة».</p>${st.fatal ? `<p class="fineprint" dir="ltr">${esc(st.fatal)}</p>` : ''}
+      <button class="btn btn-primary block" data-act="reload">إعادة المحاولة</button>
+      <button class="linkbtn" data-act="logout">تسجيل الخروج</button></div>
   </section>`;
 }
 function authMsg(err){
   const c = (err && err.code) || '';
-  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'الإيميل أو الباسورد غلط.';
-  if (c.includes('email-already-in-use')) return 'هذا الإيميل عنده حساب. اضغط «دخول».';
-  if (c.includes('weak-password')) return 'الباسورد لازم يكون 6 حروف أو أكثر.';
-  if (c.includes('invalid-email')) return 'الإيميل مكتوب غلط.';
-  if (c.includes('network-request-failed')) return 'ماكو نت. تأكد من الاتصال وجرب مرة ثانية.';
-  if (c.includes('too-many-requests')) return 'محاولات كثيرة. انتظر شوية وجرب.';
-  return 'ما صار. جرب مرة ثانية.';
+  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+  if (c.includes('email-already-in-use')) return 'هذا البريد الإلكتروني مسجّل مسبقاً. اضغط «تسجيل الدخول».';
+  if (c.includes('weak-password')) return 'يجب أن تتكون كلمة المرور من 6 أحرف أو أكثر.';
+  if (c.includes('invalid-email')) return 'صيغة البريد الإلكتروني غير صحيحة.';
+  if (c.includes('network-request-failed')) return 'لا يوجد اتصال بالإنترنت. تأكد من الاتصال وحاول مرة أخرى.';
+  if (c.includes('too-many-requests')) return 'محاولات كثيرة. انتظر قليلاً ثم حاول مجدداً.';
+  return 'تعذّر إتمام العملية. حاول مرة أخرى.';
 }
 
 /* ---------- app shell ---------- */
@@ -652,7 +653,7 @@ function viewTitle(){
   const v = ui.view;
   if (v.type === 'customer') return (cust(v.id) || {}).name || '';
   if (v.type === 'company') return (co(v.id) || {}).name || '';
-  return {log: 'سجل الحركات', users: 'الموظفين والصلاحيات', settings: 'إعدادات المحل'}[v.type] || '';
+  return {log: 'سجل الحركات', users: 'الموظفون والصلاحيات', settings: 'إعدادات المحل'}[v.type] || '';
 }
 function whoChip(u){ return `<button class="who" data-act="account" aria-label="حسابي"><span class="who-av">${esc(initial(u.name))}</span><span class="who-txt"><b>${esc(u.name)}</b><small>${ROLES[u.role]}</small></span></button>`; }
 function barView(){
@@ -660,7 +661,7 @@ function barView(){
   if (ui.view) return `<header class="bar"><button class="iconbtn" data-act="back" aria-label="رجوع">${ic('back')}</button><div class="bar-title">${esc(viewTitle())}</div>${whoChip(u)}</header>`;
   return `<header class="bar"><img class="logo" src="icons/wordmark.png" alt="محمود ناجي"><span class="bar-app">دفتر الديون</span><span class="spacer"></span>${whoChip(u)}</header>`;
 }
-const netHTML = () => st.online ? '' : `<div class="ribbon">${ic('cloud')}<span>بدون نت. اللي تسجله ينحفظ على الموبايل، ويترفع وحده أول ما يرجع النت.</span></div>`;
+const netHTML = () => st.online ? '' : `<div class="ribbon">${ic('cloud')}<span>لا يوجد اتصال بالإنترنت. ما تسجّله يُحفظ على الهاتف ويُرفع تلقائياً عند عودة الاتصال.</span></div>`;
 function renderNet(){ const el = $('#net'); if (el) el.innerHTML = netHTML(); }
 function navView(){
   const u = me(), tabs = [['customers', 'الزبائن', 'users']];
@@ -733,8 +734,8 @@ function go(to){
 const FILTERS = {
   all: {l: 'الكل', test: () => true},
   owed: {l: 'عليهم دين', test: r => r.b.IQD > 0 || r.b.USD > 0},
-  late: {l: 'متأخرين', test: r => r.d && r.d.late},
-  settled: {l: 'مسددين', test: r => r.b.IQD <= 0 && r.b.USD <= 0}
+  late: {l: 'متأخرون', test: r => r.d && r.d.late},
+  settled: {l: 'مسدّدون', test: r => r.b.IQD <= 0 && r.b.USD <= 0}
 };
 const custRows = () => st.customers.map(c => ({c, b: bal(c.id), d: dueInfo(c.id), p: pend(c.id), last: lastAt(c.id)}));
 function chipsHTML(){
@@ -749,13 +750,13 @@ function custRow(r, showBal){
     if (d.late) pills.push(`<span class="pill late">${dueText(d)}</span>`);
     else if (d.days <= 5) pills.push(`<span class="pill soon">${dueText(d)}</span>`);
   }
-  if (p.n) pills.push(`<span class="pill wait">${p.n === 1 ? 'حركة معلقة' : countAr(p.n, '', 'حركتين معلقة', 'حركات معلقة', 'حركة معلقة')}</span>`);
+  if (p.n) pills.push(`<span class="pill wait">${p.n === 1 ? 'حركة معلّقة' : countAr(p.n, '', 'حركتان معلّقتان', 'حركات معلّقة', 'حركة معلّقة')}</span>`);
   let right = '';
   if (showBal) {
     const lines = [];
     for (const cur of ['IQD', 'USD']) {
       if (b[cur] > 0) lines.push(amt(b[cur], cur, 'owe'));
-      else if (b[cur] < 0) lines.push(`<span class="cred-l">إله ${amt(-b[cur], cur, 'cred')}</span>`);
+      else if (b[cur] < 0) lines.push(`<span class="cred-l">له ${amt(-b[cur], cur, 'cred')}</span>`);
     }
     right = `<span class="bal">${lines.length ? lines.join('') : '<span class="pill ok">مسدد</span>'}</span>`;
   }
@@ -770,9 +771,9 @@ function custListHTML(){
   if (q) rows = rows.filter(r => norm(r.c.name).includes(q) || norm(r.c.note).includes(q) || (qd.length >= 3 && toLatin(r.c.phone).replace(/\D/g, '').includes(qd)));
   if (showBal) rows = rows.filter(FILTERS[ui.filter].test);
   if (!rows.length) {
-    if (q) return `<div class="empty">${ic('search')}<span>ماكو زبون بهالاسم.</span><button class="linkbtn" data-act="add-cust" data-name="${esc(ui.q.trim())}">أضف «${esc(ui.q.trim())}» كزبون جديد</button></div>`;
-    if (!st.customers.length) return `<div class="empty">${ic('users')}<span>بعد ماكو زبائن. اضغط «زبون جديد» وأضف أول زبون، ووياه رصيده السابق من الدفتر.</span>${u.role === 'owner' ? '<button class="linkbtn" data-act="import">أو استورد أرصدة الدفتر من ملف إكسل</button>' : ''}</div>`;
-    return `<div class="empty">${ic('users')}<span>ماكو زبائن بهالقائمة.</span></div>`;
+    if (q) return `<div class="empty">${ic('search')}<span>لا يوجد زبون بهذا الاسم.</span><button class="linkbtn" data-act="add-cust" data-name="${esc(ui.q.trim())}">أضف «${esc(ui.q.trim())}» كزبون جديد</button></div>`;
+    if (!st.customers.length) return `<div class="empty">${ic('users')}<span>لا يوجد زبائن بعد. اضغط «زبون جديد» لإضافة أول زبون مع رصيده السابق من الدفتر.</span>${u.role === 'owner' ? '<button class="linkbtn" data-act="import">أو استورد أرصدة الدفتر من ملف إكسل</button>' : ''}</div>`;
+    return `<div class="empty">${ic('users')}<span>لا يوجد زبائن في هذه القائمة.</span></div>`;
   }
   return `<div class="list">${rows.map(r => custRow(r, showBal)).join('')}</div>`;
 }
@@ -781,20 +782,20 @@ function customersScreen(){
   let h = `<div class="titlebar"><h1 class="h1">الزبائن</h1><span class="today">${WEEKDAYS[d.getDay()]} ${fmtDate(todayISO())}</span></div>`;
   if (u.role === 'owner' && pendingCount()) {
     const pc = pendingCount();
-    h += `<button class="notice" data-act="tab" data-tab="approvals"><span class="count">${pc}</span><span class="txt"><b>${countAr(pc, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')} بانتظار موافقتك</b><small>سجلها الموظفين، وتنحسب بعد ما توافق</small></span>${ic('back', 'flip')}</button>`;
+    h += `<button class="notice" data-act="tab" data-tab="approvals"><span class="count">${pc}</span><span class="txt"><b>${countAr(pc, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')} بانتظار موافقتك</b><small>سجّلها الموظفون، وتُحتسب بعد موافقتك</small></span>${ic('back', 'flip')}</button>`;
   }
   if (u.role === 'owner' && st.custReady && st.customers.length && Date.now() - (st.shop.lastBackupAt || 0) > 7 * 864e5) {
-    h += `<div class="backup">${ic('download')}<span class="txt"><b>${st.shop.lastBackupAt ? `آخر نسخة احتياطية ${relDay(isoOf(new Date(st.shop.lastBackupAt)))}` : 'بعدك ما نزّلت نسخة احتياطية'}</b><small>نزّل نسخة إكسل وخزنها بإيميلك. ياخذ ثواني.</small></span><button class="btn btn-ghost" data-act="export">نزّل هسه</button></div>`;
+    h += `<div class="backup">${ic('download')}<span class="txt"><b>${st.shop.lastBackupAt ? `آخر نسخة احتياطية ${relDay(isoOf(new Date(st.shop.lastBackupAt)))}` : 'لم تنزّل نسخة احتياطية بعد'}</b><small>نزّل نسخة إكسل واحفظها في بريدك الإلكتروني. تستغرق ثوانٍ.</small></span><button class="btn btn-ghost" data-act="export">تنزيل الآن</button></div>`;
   }
   if (can.seeTotals(u) && st.custReady) {
     const t = totals();
     h += `<section class="totals" aria-label="المطلوب من الزبائن">
       <div class="total"><span class="lbl">المطلوب بالدينار</span><span class="val">${fmtNum(t.IQD, 'IQD')}<small>د.ع</small></span></div>
       <div class="total"><span class="lbl">المطلوب بالدولار</span><span class="val">${fmtNum(t.USD, 'USD')}<small>$</small></span></div></section>
-      <div class="meta-line"><span>${t.owed ? countAr(t.owed, 'زبون واحد عليه دين', 'زبونين عليهم دين', 'زبائن عليهم دين', 'زبون عليهم دين') : 'ماكو ديون مفتوحة'}</span>${t.late ? `<span class="late-txt">${countAr(t.late, 'واحد متأخر', 'اثنين متأخرين', 'متأخرين', 'متأخر')}</span>` : ''}</div>`;
+      <div class="meta-line"><span>${t.owed ? countAr(t.owed, 'زبون واحد عليه دين', 'زبونان عليهما دين', 'زبائن عليهم دين', 'زبوناً عليهم دين') : 'لا توجد ديون مفتوحة'}</span>${t.late ? `<span class="late-txt">${countAr(t.late, 'زبون واحد متأخر', 'زبونان متأخران', 'زبائن متأخرين', 'زبوناً متأخراً')}</span>` : ''}</div>`;
   }
-  if (showBal && st.custReady && can.message(u) && totals().owed) h += `<button class="btn btn-ghost block" data-act="bulk">${ic('wa')}إرسال الكشف للكل</button>`;
-  h += `<label class="search" for="q">${ic('search')}<input id="q" type="search" placeholder="دوّر بالاسم أو المنطقة أو الرقم" value="${esc(ui.q)}" autocomplete="off" enterkeyhint="search"></label>`;
+  if (showBal && st.custReady && can.message(u) && totals().owed) h += `<button class="btn btn-ghost block" data-act="bulk">${ic('wa')}إرسال كشف الحساب للجميع</button>`;
+  h += `<label class="search" for="q">${ic('search')}<input id="q" type="search" placeholder="ابحث بالاسم أو المنطقة أو الرقم" value="${esc(ui.q)}" autocomplete="off" enterkeyhint="search"></label>`;
   if (showBal) h += `<div class="chips" id="cust-chips" role="group" aria-label="تصفية">${chipsHTML()}</div>`;
   return h + `<div id="cust-list">${custListHTML()}</div>`;
 }
@@ -806,8 +807,8 @@ function entRow(e, runAfter, showCust){
   let stamp = '';
   if (e.status === 'pending') stamp = '<span class="stamp wait">بانتظار الموافقة</span>';
   else if (e.status === 'rejected') stamp = '<span class="stamp rej">مرفوضة</span>';
-  else if (e.status === 'approved' && e.by !== e.approvedBy) stamp = `<span class="stamp ok">وافق ${esc(uname(e.approvedBy))}</span>`;
-  const meta = [`<span class="no" dir="ltr">${noTag(e.no)}</span>`, `<span>سجلها ${esc(uname(e.by))}</span>`];
+  else if (e.status === 'approved' && e.by !== e.approvedBy) stamp = `<span class="stamp ok">وافق عليها ${esc(uname(e.approvedBy))}</span>`;
+  const meta = [`<span class="no" dir="ltr">${noTag(e.no)}</span>`, `<span>سجّلها ${esc(uname(e.by))}</span>`];
   if (e.invNo) meta.push(`<span>قائمة رقم <span dir="auto">${esc(e.invNo)}</span></span>`);
   if (inv && e.due && e.status !== 'rejected') meta.push(`<span>الموعد ${fmtDate(e.due)}</span>`);
   if (e.edits && e.edits.length) meta.push('<span>معدّلة</span>');
@@ -816,7 +817,7 @@ function entRow(e, runAfter, showCust){
   let run = '';
   if (runAfter && runAfter.has(e.id)) {
     const v = runAfter.get(e.id);
-    run = `<span class="run">${e.coid ? coRunText(v, e.cur) : v < 0 ? `إله ${amtText(-v, e.cur)}` : `الرصيد ${amtText(v, e.cur)}`}</span>`;
+    run = `<span class="run">${e.coid ? coRunText(v, e.cur) : v < 0 ? `له ${amtText(-v, e.cur)}` : `الرصيد ${amtText(v, e.cur)}`}</span>`;
   }
   return `<button class="ent${cls}" data-act="open-entry" data-id="${e.id}">
     <span class="date"><b>${d.getDate()}</b><small>${MONTHS_SHORT[d.getMonth()]}</small></span>
@@ -842,7 +843,7 @@ function customerScreen(cid){
   const lines = [];
   for (const cur of ['IQD', 'USD']) {
     if (b[cur] > 0) lines.push(amt(b[cur], cur, 'owe'));
-    else if (b[cur] < 0) lines.push(`<span class="cred-l" style="font-size:16px">إله ${amt(-b[cur], cur, 'cred')}</span>`);
+    else if (b[cur] < 0) lines.push(`<span class="cred-l" style="font-size:16px">له ${amt(-b[cur], cur, 'cred')}</span>`);
   }
   const owes = b.IQD > 0 || b.USD > 0;
   let foot = '';
@@ -856,32 +857,32 @@ function customerScreen(cid){
     const lim = cur === 'IQD' ? c.limitIQD : c.limitUSD;
     if (!lim) continue;
     const used = Math.max(0, b[cur]), pct = Math.round(used / lim * 100);
-    foot += `<div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px"><span>سقف الدين ${amtText(lim, cur)}</span><span>مستخدم ${pct}%</span></div><div class="meter${pct > 100 ? ' over' : ''}"><i style="width:${Math.min(100, pct)}%"></i></div></div>`;
+    foot += `<div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px"><span>سقف الدين ${amtText(lim, cur)}</span><span>نسبة الاستخدام ${pct}%</span></div><div class="meter${pct > 100 ? ' over' : ''}"><i style="width:${Math.min(100, pct)}%"></i></div></div>`;
   }
-  h += `<section class="balance" aria-label="رصيد الزبون"><span class="k">${owes ? 'المطلوب منه' : lines.length ? 'إله رصيد عندكم' : 'الحساب'}</span>
+  h += `<section class="balance" aria-label="رصيد الزبون"><span class="k">${owes ? 'المبلغ المستحق عليه' : lines.length ? 'له رصيد لدينا' : 'الحساب'}</span>
     <div class="bal-lines">${lines.length ? lines.join('') : '<span class="settled">مسدد بالكامل</span>'}</div>${foot ? `<div class="bal-foot">${foot}</div>` : ''}</section>`;
   h += `<div class="actions"><button class="btn btn-debt grow" data-act="new-entry" data-type="debt">${ic('plus')}دين جديد</button><button class="btn btn-pay grow" data-act="new-entry" data-type="pay">${ic('check')}تسديد</button></div>`;
-  if (can.message(u)) h += `<div class="actions"><button class="btn btn-ghost grow" data-act="remind" ${owes ? '' : 'disabled'}>${ic('bell')}تذكير</button><button class="btn btn-ghost grow" data-act="send-statement" ${list ? '' : 'disabled'}>${ic('doc')}إرسال الكشف</button></div>`;
+  if (can.message(u)) h += `<div class="actions"><button class="btn btn-ghost grow" data-act="remind" ${owes ? '' : 'disabled'}>${ic('bell')}تذكير</button><button class="btn btn-ghost grow" data-act="send-statement" ${list ? '' : 'disabled'}>${ic('doc')}إرسال كشف الحساب</button></div>`;
   if (!list) return h + `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2></div>${loadingBox()}</section>`;
   const all = list.filter(e => e.status !== 'deleted');
   const runAfter = new Map(), run = {IQD: 0, USD: 0};
   for (const e of all.filter(x => x.status === 'approved').sort(sortChrono)) { run[e.cur] = r2(run[e.cur] + effect(e)); runAfter.set(e.id, run[e.cur]); }
   const sorted = all.slice().sort((a, b2) => -sortChrono(a, b2));
-  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}</span></div>
-    ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>ماكو حركات بعد. سجّل أول دين أو تسديد من الأزرار فوق.</span></div>`}</section>`;
+  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')}</span></div>
+    ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>لا توجد حركات بعد. سجّل أول دين أو تسديد من الأزرار أعلاه.</span></div>`}</section>`;
   return h;
 }
 
 /* ---------- companies ---------- */
 const CO_FILTERS = {
   all: {l: 'الكل', test: () => true},
-  in: {l: 'نطلبهم', test: r => r.b.IQD > 0 || r.b.USD > 0},
-  out: {l: 'يطلبونا', test: r => r.b.IQD < 0 || r.b.USD < 0},
+  in: {l: 'لنا', test: r => r.b.IQD > 0 || r.b.USD > 0},
+  out: {l: 'علينا', test: r => r.b.IQD < 0 || r.b.USD < 0},
   late: {l: 'متأخرة', test: r => !!((r.d.in && r.d.in.late) || (r.d.out && r.d.out.late))}
 };
 const coRows = () => st.companies.map(c => ({c, b: coBal(c.id), d: coDueInfo(c.id), p: coPendList(c.id).length, last: coLastAt(c.id)}));
-// «تسديدنا»: when we pay them; «تسديدهم»: when they pay us
-function coDueText(x, ours){ const w = ours ? 'تسديدنا' : 'تسديدهم'; return x.late ? `${w} متأخر ${daysAr(-x.days)}` : x.days === 0 ? `${w} اليوم` : `${w} بعد ${daysAr(x.days)}`; }
+// «سدادنا»: when we pay them; «سدادهم»: when they pay us
+function coDueText(x, ours){ const w = ours ? 'سدادنا' : 'سدادهم'; return x.late ? `${w} متأخر ${daysAr(-x.days)}` : x.days === 0 ? `${w} اليوم` : `${w} بعد ${daysAr(x.days)}`; }
 function coDuePills(d){
   const out = [];
   for (const [x, ours] of [[d.out, true], [d.in, false]]) if (x && (x.late || x.days <= 5)) out.push(`<span class="pill ${x.late ? 'late' : 'soon'}">${coDueText(x, ours)}</span>`);
@@ -890,8 +891,8 @@ function coDuePills(d){
 function coBalLines(b){
   const lines = [];
   for (const cur of ['IQD', 'USD']) {
-    if (b[cur] > 0) lines.push(`<span class="dline"><small class="dlbl">نطلبهم</small>${amt(b[cur], cur, 'owe')}</span>`);
-    else if (b[cur] < 0) lines.push(`<span class="dline"><small class="dlbl">يطلبونا</small>${amt(-b[cur], cur, 'cred')}</span>`);
+    if (b[cur] > 0) lines.push(`<span class="dline"><small class="dlbl">لنا</small>${amt(b[cur], cur, 'owe')}</span>`);
+    else if (b[cur] < 0) lines.push(`<span class="dline"><small class="dlbl">علينا</small>${amt(-b[cur], cur, 'cred')}</span>`);
   }
   return lines;
 }
@@ -903,15 +904,15 @@ function coRow(r){
   const {c, b, d, p} = r, sub = [], pills = coDuePills(d);
   if (c.note) sub.push(`<span>${esc(c.note)}</span>`);
   sub.push(`<span>آخر حركة ${relDay(isoOf(new Date(r.last || Date.now())))}</span>`);
-  if (p) pills.push(`<span class="pill wait">${p === 1 ? 'حركة معلقة' : countAr(p, '', 'حركتين معلقة', 'حركات معلقة', 'حركة معلقة')}</span>`);
+  if (p) pills.push(`<span class="pill wait">${p === 1 ? 'حركة معلّقة' : countAr(p, '', 'حركتان معلّقتان', 'حركات معلّقة', 'حركة معلّقة')}</span>`);
   const lines = coBalLines(b);
   return `<button class="row" data-act="open-co" data-id="${c.id}"><span class="av">${esc(initial(c.name))}</span>
     <span class="main"><span class="name">${esc(c.name)}</span><span class="sub">${sub.join('<i class="dot"></i>')}</span>${pills.length ? `<span class="pills">${pills.join('')}</span>` : ''}</span>
-    <span class="bal">${lines.length ? lines.join('') : '<span class="pill ok">مصفّى</span>'}</span></button>`;
+    <span class="bal">${lines.length ? lines.join('') : '<span class="pill ok">مسدّد</span>'}</span></button>`;
 }
 const coRulesBox = () => `<div class="empty">${ic('shield')}<span>${me().role === 'owner'
-  ? 'صفحة الشركات تحتاج تحديث قواعد الحماية بـ Firebase. أول ما تتحدث، اضغط «حاول مرة ثانية».'
-  : 'صفحة الشركات بعدها ما تجهّزت. راجع المدير.'}</span><button class="btn btn-ghost" data-act="reload">حاول مرة ثانية</button></div>`;
+  ? 'تحتاج صفحة الشركات إلى تحديث قواعد الحماية في Firebase. بعد التحديث، اضغط «إعادة المحاولة».'
+  : 'صفحة الشركات غير جاهزة بعد. يرجى مراجعة المدير.'}</span><button class="btn btn-ghost" data-act="reload">إعادة المحاولة</button></div>`;
 function coListHTML(){
   if (st.coBlocked) return coRulesBox();
   if (!st.coReady) return loadingBox();
@@ -920,9 +921,9 @@ function coListHTML(){
   if (q) rows = rows.filter(r => norm(r.c.name).includes(q) || norm(r.c.note).includes(q) || (qd.length >= 3 && toLatin(r.c.phone).replace(/\D/g, '').includes(qd)));
   rows = rows.filter(CO_FILTERS[ui.coFilter].test);
   if (!rows.length) {
-    if (q) return `<div class="empty">${ic('search')}<span>ماكو شركة بهالاسم.</span><button class="linkbtn" data-act="add-co" data-name="${esc(ui.coQ.trim())}">أضف «${esc(ui.coQ.trim())}» كشركة جديدة</button></div>`;
-    if (!st.companies.length) return `<div class="empty">${ic('building')}<span>بعد ماكو شركات. اضغط «شركة جديدة» وأضف أول شركة، ووياها رصيدها السابق.</span></div>`;
-    return `<div class="empty">${ic('building')}<span>ماكو شركات بهالقائمة.</span></div>`;
+    if (q) return `<div class="empty">${ic('search')}<span>لا توجد شركة بهذا الاسم.</span><button class="linkbtn" data-act="add-co" data-name="${esc(ui.coQ.trim())}">أضف «${esc(ui.coQ.trim())}» كشركة جديدة</button></div>`;
+    if (!st.companies.length) return `<div class="empty">${ic('building')}<span>لا توجد شركات بعد. اضغط «شركة جديدة» لإضافة أول شركة مع رصيدها السابق.</span></div>`;
+    return `<div class="empty">${ic('building')}<span>لا توجد شركات في هذه القائمة.</span></div>`;
   }
   return `<div class="list">${rows.map(coRow).join('')}</div>`;
 }
@@ -939,10 +940,10 @@ function companiesScreen(){
   if (can.seeTotals(u) && st.coReady) {
     const t = coTotals();
     h += `<section class="totals" aria-label="مجموع حسابات الشركات">
-      <div class="total"><span class="lbl">نطلب الشركات</span>${totLines(t.in, 'owe')}</div>
-      <div class="total"><span class="lbl">الشركات تطلبنا</span>${totLines(t.out, 'cred')}</div></section>`;
+      <div class="total"><span class="lbl">مستحقاتنا لدى الشركات</span>${totLines(t.in, 'owe')}</div>
+      <div class="total"><span class="lbl">مستحقات الشركات علينا</span>${totLines(t.out, 'cred')}</div></section>`;
   }
-  h += `<label class="search" for="co-q">${ic('search')}<input id="co-q" type="search" placeholder="دوّر بالاسم أو الرقم" value="${esc(ui.coQ)}" autocomplete="off" enterkeyhint="search"></label>`;
+  h += `<label class="search" for="co-q">${ic('search')}<input id="co-q" type="search" placeholder="ابحث بالاسم أو الرقم" value="${esc(ui.coQ)}" autocomplete="off" enterkeyhint="search"></label>`;
   h += `<div class="chips" id="co-chips" role="group" aria-label="تصفية">${coChipsHTML()}</div>`;
   return h + `<div id="co-list">${coListHTML()}</div>`;
 }
@@ -959,7 +960,7 @@ function companyScreen(id){
   const pl = coPendList(id, list);
   if (pl.length) foot += `<div>${ic('clock')} بانتظار الموافقة: ${pl.map(e => `${entryLabel(e)} ${amtText(e.amount, e.cur)}`).join('، ')}</div>`;
   h += `<section class="balance" aria-label="حساب الشركة"><span class="k">الحساب</span>
-    <div class="bal-lines">${lines.length ? lines.join('') : '<span class="settled">الحساب مصفّى</span>'}</div>${foot ? `<div class="bal-foot">${foot}</div>` : ''}</section>`;
+    <div class="bal-lines">${lines.length ? lines.join('') : '<span class="settled">الحساب مسدّد بالكامل</span>'}</div>${foot ? `<div class="bal-foot">${foot}</div>` : ''}</section>`;
   h += `<div class="actions quad">${['buy', 'paid', 'sell', 'recv'].map(k =>
     `<button class="btn ${CO_TYPES[k].inv ? 'btn-debt' : 'btn-pay'}" data-act="new-co-entry" data-type="${k}">${ic(CO_TYPES[k].inv ? 'plus' : 'check')}${CO_TYPES[k].l}</button>`).join('')}</div>`;
   if (!list) return h + `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2></div>${loadingBox()}</section>`;
@@ -967,8 +968,8 @@ function companyScreen(id){
   const runAfter = new Map(), run = {IQD: 0, USD: 0};
   for (const e of all.filter(x => x.status === 'approved').sort(sortChrono)) { run[e.cur] = r2(run[e.cur] + coEffect(e)); runAfter.set(e.id, run[e.cur]); }
   const sorted = all.slice().sort((a, b2) => -sortChrono(a, b2));
-  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}</span></div>
-    ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>ماكو حركات بعد. سجّل أول قائمة أو تسديد من الأزرار فوق.</span></div>`}</section>`;
+  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')}</span></div>
+    ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>لا توجد حركات بعد. سجّل أول قائمة أو دفعة من الأزرار أعلاه.</span></div>`}</section>`;
   return h;
 }
 
@@ -976,14 +977,14 @@ function companyScreen(id){
 const pendingCount = () => st.pending.length + st.coPending.length;
 function approvalsScreen(){
   // oldest first: approving from the top follows the order things happened, so each WhatsApp message carries the
-  // balance as it really was (a payment approved before an earlier debt would leave that debt out of its «الباقي»)
+  // balance as it really was (a payment approved before an earlier debt would leave that debt out of its «المتبقي»)
   const list = st.pending.concat(st.coPending).sort((a, b) => a.at - b.at), seen = new Set();
-  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هاي الحركات سجلها الموظفين، مرتبة من الأقدم. وافق عليها من فوك لجوة: أول ما توافق تنحسب بالحساب، وحركة الزبون تطلعلك رسالتها الواتساب جاهزة.</p>`;
-  if (!list.length) return h + `<div class="empty">${ic('check')}<span>ماكو شي بانتظار موافقتك.</span></div>`;
+  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هذه الحركات سجّلها الموظفون، مرتبة من الأقدم. وافق عليها من الأعلى إلى الأسفل: تُحتسب الحركة فور موافقتك، وتظهر لك رسالة الواتساب الخاصة بحركة الزبون جاهزة للإرسال.</p>`;
+  if (!list.length) return h + `<div class="empty">${ic('check')}<span>لا توجد حركات بانتظار موافقتك.</span></div>`;
   return h + '<div class="stack">' + list.map(e => {
     const isCo = !!e.coid, inv = isInvoice(e), lc = !isCo && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
     const party = isCo ? `co:${e.coid}` : `c:${e.cid}`, older = seen.has(party); seen.add(party);
-    const meta = [`<span>سجلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
+    const meta = [`<span>سجّلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
     if (isCo) meta.unshift('<span>حساب شركة</span>');
     if (e.invNo) meta.push(`<span>قائمة رقم <span dir="auto">${esc(e.invNo)}</span></span>`);
     if (e.due) meta.push(`<span>الموعد ${fmtDate(e.due)}</span>`);
@@ -992,8 +993,8 @@ function approvalsScreen(){
         <span class="appr-amt">${amt(e.amount, e.cur, inv ? 'owe' : 'cred')}</span>
         ${e.note ? `<span>${esc(e.note)}</span>` : ''}
         <span class="meta">${meta.join('<i class="dot"></i>')}</span>
-        ${lc ? `<span class="warnbox">${ic('alert')}<span>يعدّي سقف الزبون بـ ${amtText(lc.over, lc.cur)}. الرصيد يصير ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
-        ${older ? `<span class="warnbox soft">${ic('info')}<span>فوكها حركة أقدم لنفس ${isCo ? 'الشركة' : 'الزبون'} تنتظر. وافق عليها أول حتى يطلع الرصيد صحيح.</span></span>` : ''}
+        ${lc ? `<span class="warnbox">${ic('alert')}<span>يتجاوز سقف الزبون بمقدار ${amtText(lc.over, lc.cur)}. يصبح الرصيد ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
+        ${older ? `<span class="warnbox soft">${ic('info')}<span>توجد أعلاها حركة أقدم ${isCo ? 'للشركة نفسها' : 'للزبون نفسه'} بانتظار الموافقة. وافق عليها أولاً ليظهر الرصيد صحيحاً.</span></span>` : ''}
       </button>
       <div class="appr-actions"><button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button><button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
   }).join('') + '</div>';
@@ -1001,9 +1002,9 @@ function approvalsScreen(){
 function requestsScreen(){
   const waiting = st.myPending.concat(st.myCoPending), rejected = st.myRejected.concat(st.myCoRejected);
   const list = waiting.concat(rejected);
-  let h = `<div class="titlebar"><h1 class="h1">طلباتي</h1></div><p class="lead">كل حركة تسجلها تروح إلى ${esc(ownerName())}. هنا تشوف شنو بعده ينتظر، وشنو رفضه وليش. المقبولة تلكاها بكشف الحساب.</p>`;
-  h += `<div class="meta-line" style="margin-top:0"><span>${countAr(waiting.length, 'وحدة تنتظر', 'ثنتين تنتظر', 'تنتظر', 'تنتظر')}</span>${rejected.length ? `<span class="late-txt">${countAr(rejected.length, 'وحدة مرفوضة', 'ثنتين مرفوضة', 'مرفوضة', 'مرفوضة')}</span>` : ''}</div>`;
-  if (!list.length) return h + `<div class="empty">${ic('inbox')}<span>ماكو شي ينتظر. افتح أي زبون وسجّل دين أو تسديد.</span></div>`;
+  let h = `<div class="titlebar"><h1 class="h1">طلباتي</h1></div><p class="lead">تُرسل كل حركة تسجّلها إلى ${esc(ownerName())}. هنا ترى ما ينتظر الموافقة، وما رُفض وسبب رفضه. الحركات المقبولة تجدها في كشف الحساب.</p>`;
+  h += `<div class="meta-line" style="margin-top:0"><span>${countAr(waiting.length, 'حركة واحدة تنتظر', 'حركتان تنتظران', 'حركات تنتظر', 'حركة تنتظر')}</span>${rejected.length ? `<span class="late-txt">${countAr(rejected.length, 'حركة واحدة مرفوضة', 'حركتان مرفوضتان', 'حركات مرفوضة', 'حركة مرفوضة')}</span>` : ''}</div>`;
+  if (!list.length) return h + `<div class="empty">${ic('inbox')}<span>لا توجد حركات بانتظار الموافقة. افتح صفحة أي زبون لتسجيل دين أو تسديد.</span></div>`;
   return h + ledgerHTML(list.slice().sort((a, b) => -sortChrono(a, b)), null, true);
 }
 
@@ -1014,7 +1015,7 @@ function reportsScreen(){
   let h = `<div class="titlebar"><h1 class="h1">التقارير</h1></div>
     <div class="seg" role="group" aria-label="نوع التقرير"><button data-act="rtab" data-v="today" aria-pressed="${ui.reportTab === 'today'}">جرد اليوم</button><button data-act="rtab" data-v="month" aria-pressed="${ui.reportTab === 'month'}">الشهر</button></div>`;
   h += ui.reportTab === 'today' ? todayReport() : monthReport();
-  h += `<section class="stack"><button class="btn btn-ghost block" data-act="export">${ic('download')}تنزيل نسخة إكسل</button><p class="note">${ic('info')}<span>ملف واحد بيه أرصدة كل الزبائن وكل الحركات، تحفظه كنسخة احتياطية أو تنطيه للمحاسب.</span></p></section>`;
+  h += `<section class="stack"><button class="btn btn-ghost block" data-act="export">${ic('download')}تنزيل نسخة إكسل</button><p class="note">${ic('info')}<span>ملف واحد يضم أرصدة جميع الزبائن وكل الحركات، يمكنك حفظه كنسخة احتياطية أو تسليمه للمحاسب.</span></p></section>`;
   return h;
 }
 function todayReport(){
@@ -1023,9 +1024,9 @@ function todayReport(){
   const t = todayISO(), todays = st.today.filter(e => isoOf(new Date(e.at)) === t && (e.status === 'approved' || e.status === 'pending') && !e.opening);
   const cash = {IQD: 0, USD: 0}, cashWait = {IQD: 0, USD: 0};
   for (const e of todays) if (e.type === 'pay') { cash[e.cur] = r2(cash[e.cur] + e.amount); if (e.status === 'pending') cashWait[e.cur] = r2(cashWait[e.cur] + e.amount); }
-  const waitTxt = (cashWait.IQD || cashWait.USD) ? `منها تنتظر الموافقة: ${[cashWait.IQD ? amtText(cashWait.IQD, 'IQD') : '', cashWait.USD ? amtText(cashWait.USD, 'USD') : ''].filter(Boolean).join(' و ')}` : 'كلها مقبولة';
-  let h = `<section class="cash"><span class="k">الكاش المستلم اليوم</span><div class="v">${cashBlock(cash)}</div><span class="s">${waitTxt}</span></section>`;
-  h += `<div class="sec-h"><h2>كل واحد شكد عنده</h2><span>${WEEKDAYS[new Date().getDay()]} ${fmtDate(t)}</span></div><div class="stack">`;
+  const waitTxt = (cashWait.IQD || cashWait.USD) ? `منها تنتظر الموافقة: ${[cashWait.IQD ? amtText(cashWait.IQD, 'IQD') : '', cashWait.USD ? amtText(cashWait.USD, 'USD') : ''].filter(Boolean).join(' و ')}` : 'جميعها مقبولة';
+  let h = `<section class="cash"><span class="k">النقد المستلم اليوم</span><div class="v">${cashBlock(cash)}</div><span class="s">${waitTxt}</span></section>`;
+  h += `<div class="sec-h"><h2>ملخص كل موظف</h2><span>${WEEKDAYS[new Date().getDay()]} ${fmtDate(t)}</span></div><div class="stack">`;
   for (const u of st.users.filter(x => x.active)) {
     const mine = todays.filter(e => e.by === u.id), pay = {IQD: 0, USD: 0}, payWait = {IQD: 0, USD: 0}, debt = {IQD: 0, USD: 0};
     let debtN = 0;
@@ -1034,9 +1035,9 @@ function todayReport(){
       else { debt[e.cur] = r2(debt[e.cur] + e.amount); debtN++; }
     }
     h += `<article class="person"><header><span class="av">${esc(initial(u.name))}</span><b>${esc(u.name)}</b><span class="role ${u.role}">${ROLES[u.role]}</span></header>
-      <div class="kv"><span>استلم كاش</span><span class="vals">${amtsInline(pay)}</span></div>
+      <div class="kv"><span>النقد المستلم</span><span class="vals">${amtsInline(pay)}</span></div>
       ${(payWait.IQD || payWait.USD) ? `<div class="kv"><span>منها تنتظر الموافقة</span><span class="vals">${amtsInline(payWait)}</span></div>` : ''}
-      <div class="kv"><span>سجّل ديون</span><span class="vals">${debtN ? `<span>${countAr(debtN, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}</span>${amtsInline(debt)}` : '<span>—</span>'}</span></div></article>`;
+      <div class="kv"><span>الديون المسجّلة</span><span class="vals">${debtN ? `<span>${countAr(debtN, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')}</span>${amtsInline(debt)}` : '<span>—</span>'}</span></div></article>`;
   }
   return h + '</div>';
 }
@@ -1057,8 +1058,8 @@ function monthReport(){
     <div class="stat"><span class="k">عدد الحركات</span><span class="v">${moves.length}</span></div>
     <div class="stat"><span class="k">زبائن جدد</span><span class="v">${newCust}</span></div></div>`;
   const top = custRows().filter(r => r.b.IQD > 0 || r.b.USD > 0).sort((a, b) => (b.b.IQD - a.b.IQD) || (b.b.USD - a.b.USD)).slice(0, 5);
-  h += `<section class="stack"><div class="sec-h"><h2>أكثر المطلوبين هسه</h2><span>${countAr(top.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}</span></div>`;
-  h += top.length ? `<div class="list">${top.map(r => custRow(r, true)).join('')}</div>` : '<div class="empty"><span>ماكو ديون مفتوحة.</span></div>';
+  h += `<section class="stack"><div class="sec-h"><h2>أعلى الأرصدة المستحقة حالياً</h2><span>${countAr(top.length, 'زبون واحد', 'زبونان', 'زبائن', 'زبوناً')}</span></div>`;
+  h += top.length ? `<div class="list">${top.map(r => custRow(r, true)).join('')}</div>` : '<div class="empty"><span>لا توجد ديون مفتوحة.</span></div>';
   return h + '</section>';
 }
 async function loadMonth(){
@@ -1104,7 +1105,7 @@ async function exportExcel(btn, fileName){
     if (can.companies(me()) && !st.coBlocked) {
       const cl = ents(await getDocs(col('centries')));
       const byCo = {}; for (const e of cl) (byCo[e.coid] = byCo[e.coid] || []).push(e);
-      const r3 = [['الشركة', 'الهاتف', 'ملاحظة', 'نطلبهم دينار', 'يطلبونا دينار', 'نطلبهم دولار', 'يطلبونا دولار', 'حركات معلقة']];
+      const r3 = [['الشركة', 'الهاتف', 'ملاحظة', 'لنا بالدينار', 'علينا بالدينار', 'لنا بالدولار', 'علينا بالدولار', 'حركات معلّقة']];
       for (const c of st.companies) {
         const L = byCo[c.id] || [], s = coSummarize(L), pn = L.filter(e => e.status === 'pending').length;
         r3.push([c.name, c.phone || '', c.note || '', Math.max(0, s.bal.IQD), Math.max(0, -s.bal.IQD), Math.max(0, s.bal.USD), Math.max(0, -s.bal.USD), pn]);
@@ -1131,7 +1132,7 @@ async function exportExcel(btn, fileName){
       setDoc(ref('meta', 'shop'), {lastBackupAt: now}, {merge: true}).catch(() => {});
       render();
     }
-    toast('نزل ملف الإكسل. خزنه بإيميلك');
+    toast('تم تنزيل ملف الإكسل. احفظه في بريدك الإلكتروني');
     ok = true;
   } catch (err) { toastErr(err); }
   finally { if (btn) btn.disabled = false; }
@@ -1212,11 +1213,11 @@ function renderImport(){
   const s = sheetState; if (!s || s.kind !== 'import') return;
   const body = $('#imp-body'), foot = $('#imp-foot'); if (!body || !foot) return;
   const warn = s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : '';
-  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.parsed ? 'ملف ثاني' : 'اختار الملف'}<input type="file" id="imp-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
+  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.parsed ? 'ملف آخر' : 'اختر الملف'}<input type="file" id="imp-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
   if (s.reading) { body.innerHTML = `<div class="empty"><div class="spin" role="status" aria-label="جاري القراءة"></div><span>جاري قراءة الملف…</span></div>`; foot.innerHTML = ''; return; }
   if (!s.parsed) {
-    body.innerHTML = `<p class="lead">اختار ملف الإكسل من موبايلك. قبل ما ينضاف أي شي تشوف كل الأسماء والمجاميع.</p>
-      <p class="note">${ic('info')}<span>كل زبون ينضاف وويا رصيده كحركة وحدة مقبولة. ما تنرسل رسائل واتساب، والزبون الموجود بالتطبيق ما يتكرر.</span></p>${warn}`;
+    body.innerHTML = `<p class="lead">اختر ملف الإكسل من هاتفك. قبل إضافة أي شيء، ستظهر لك جميع الأسماء والمجاميع.</p>
+      <p class="note">${ic('info')}<span>يُضاف كل زبون مع رصيده كحركة واحدة مقبولة. لن تُرسل رسائل واتساب، ولن يتكرر الزبون الموجود في التطبيق.</span></p>${warn}`;
     foot.innerHTML = pick(true);
     return;
   }
@@ -1225,26 +1226,26 @@ function renderImport(){
   const sum = {IQD: 0, USD: 0};
   for (const r of todo) { sum.IQD += r.IQD; sum.USD = r2(sum.USD + r.USD); }
   const line = (k, v) => `<div class="kv"><span>${k}</span><span class="vals">${v}</span></div>`;
-  let h = `<div>${line('زبائن ينضافون', `<b>${custs}</b>`)}${extras ? line('أسطر ثانية لنفس الزبون', `<b>${extras}</b>`) : ''}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
-    ${skipped ? line('موجودين أصلاً، ما ينضافون', `<b>${skipped}</b>`) : ''}</div>`;
-  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')} مبلغه مو مفهوم وما ينضاف: ${esc(P.bad.join('، '))}</span></div>`;
+  let h = `<div>${line('زبائن سيُضافون', `<b>${custs}</b>`)}${extras ? line('أسطر إضافية للزبون نفسه', `<b>${extras}</b>`) : ''}${line('المجموع بالدينار', amt(sum.IQD, 'IQD'))}${line('المجموع بالدولار', amt(sum.USD, 'USD'))}
+    ${skipped ? line('موجودون مسبقاً ولن يُضافوا', `<b>${skipped}</b>`) : ''}</div>`;
+  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${P.bad.length === 1 ? 'لن يُضاف هذا السطر لأن مبلغه غير مفهوم' : 'لن تُضاف هذه الأسطر لأن مبالغها غير مفهومة'}: ${esc(P.bad.join('، '))}</span></div>`;
   // importing over an existing book adds to it; to make the app match the file, the book is cleared first
-  if (st.customers.length && !s.busy) h += `<div class="warnbox soft">${ic('info')}<span>التطبيق بي ${countAr(st.customers.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} هسه، والملف ينضاف عليهم. حتى يصير التطبيق مثل الملف بالضبط، صفّر الدفتر أول.</span></div><button class="btn btn-ghost block" data-act="reset">${ic('trash')}تصفير الدفتر</button>`;
+  if (st.customers.length && !s.busy) h += `<div class="warnbox soft">${ic('info')}<span>يحتوي التطبيق حالياً على ${countAr(st.customers.length, 'زبون واحد', 'زبونين', 'زبائن', 'زبوناً')}، وسيُضاف الملف إليهم. لكي يطابق التطبيق الملف تماماً، صفّر الدفتر أولاً.</span></div><button class="btn btn-ghost block" data-act="reset">${ic('trash')}تصفير الدفتر</button>`;
   h += warn;
   h += `<div class="list">${P.rows.map(r => {
     const amts = ['IQD', 'USD'].filter(cur => r[cur]).map(cur => amt(Math.abs(r[cur]), cur, r[cur] > 0 ? 'owe' : 'cred')).join('');
     const sub = [];
     if (r.skip) sub.push('<span class="pill off">موجود</span>');
-    else if (r.done) sub.push('<span class="pill ok">انضاف</span>');
-    else if (r.extra) sub.push('<span class="pill soon">ينضاف لنفس الزبون</span>');
+    else if (r.done) sub.push('<span class="pill ok">أُضيف</span>');
+    else if (r.extra) sub.push('<span class="pill soon">يُضاف للزبون نفسه</span>');
     if (r.note) sub.push(esc(r.note));
     if (r.phone) sub.push(`<span dir="ltr">${esc(r.phone)}</span>`);
     if (r.memo) sub.push(esc(r.memo));
     return `<div class="imp-row${r.skip || r.done ? ' skip' : ''}"><span class="main"><b>${esc(r.name)}</b>${sub.length ? `<small>${sub.join(' · ')}</small>` : ''}</span><span class="bal">${amts || '<span class="pill ok">مسدد</span>'}</span></div>`;
   }).join('')}</div>`;
-  h += `<p class="note">${ic('info')}<span>كل رصيد ينكتب بكشف الزبون باسم «${P.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر'}»، وتكدر تعدّله أو تحذفه بعدين.</span></p>`;
+  h += `<p class="note">${ic('info')}<span>يُسجَّل كل رصيد في كشف الزبون باسم «${P.backup ? 'رصيد منقول من نسخة احتياطية' : 'رصيد سابق من الدفتر'}»، ويمكنك تعديله أو حذفه لاحقاً.</span></p>`;
   body.innerHTML = h;
-  const label = custs ? `استيراد ${countAr(custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')}` : todo.length ? `استيراد ${countAr(todo.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطر')}` : 'ماكو زبائن جدد';
+  const label = custs ? `استيراد ${countAr(custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبوناً')}` : todo.length ? `استيراد ${countAr(todo.length, 'سطر واحد', 'سطرين', 'أسطر', 'سطراً')}` : 'لا يوجد زبائن جدد';
   foot.innerHTML = s.busy
     ? `<button class="btn btn-primary grow" id="imp-go" disabled>جاري الاستيراد…</button>`
     : `<button class="btn btn-primary grow" id="imp-go" data-act="imp-go" ${todo.length ? '' : 'disabled'}>${ic('check')}${label}</button>${pick(false)}`;
@@ -1258,10 +1259,10 @@ async function readImportFile(file){
     }
     const X = window.XLSX, found = findImportTable(X, X.read(await file.arrayBuffer(), {type: 'array'}));
     if (found) s.parsed = parseImport(found);
-    else s.err = 'ما لكيت بالملف عمود «الاسم» ووياه عمود «دينار» أو «دولار». اختار ملف الأرصدة، أو نسخة احتياطية نزلتها من التطبيق.';
+    else s.err = 'لم يُعثر في الملف على عمود «الاسم» مع عمود «دينار» أو «دولار». اختر ملف الأرصدة، أو نسخة احتياطية منزّلة من التطبيق.';
   } catch (err) {
     console.warn(err);
-    s.err = err && err.message === 'reader' ? 'ما گدرت أحمّل قارئ الإكسل. تأكد من النت وجرّب مرة ثانية.' : 'ما انفتح الملف. تأكد إنه ملف إكسل (xlsx).';
+    s.err = err && err.message === 'reader' ? 'تعذّر تحميل قارئ الإكسل. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.' : 'تعذّر فتح الملف. تأكد من أنه ملف إكسل (xlsx).';
   }
   s.reading = false;
   if (sheetState === s) renderImport();
@@ -1270,7 +1271,7 @@ async function runImport(){
   const s = sheetState; if (!s || s.kind !== 'import' || !s.parsed || s.busy) return;
   const rows = s.parsed.rows, todo = rows.filter(r => !r.skip && !r.done);
   if (!todo.length) { renderImport(); return; }
-  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تستورد.'; renderImport(); return; }
+  if (!navigator.onLine) { s.err = 'يتطلب الاستيراد اتصالاً بالإنترنت.'; renderImport(); return; }
   s.busy = true; s.err = ''; renderImport();
   const m = me(), now = Date.now(), today = todayISO();
   const tally = s.tally || (s.tally = {custs: 0, IQD: 0, USD: 0});
@@ -1320,11 +1321,11 @@ async function runImport(){
     await lb.commit();
     closeSheet();
     go({tab: 'customers', view: null, q: '', filter: 'all'});
-    toast(`انضاف ${countAr(tally.custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وويا أرصدتهم`);
+    toast(`تمت إضافة ${countAr(tally.custs, 'زبون واحد', 'زبونين', 'زبائن', 'زبوناً')} مع الأرصدة`);
   } catch (err) {
     console.warn(err);
     s.busy = false;
-    s.err = `وكف الاستيراد بعد ${done} من ${todo.length}. اضغط «استيراد» مرة ثانية حتى يكمل الباقي، واللي انضاف ما يتكرر.`;
+    s.err = `توقف الاستيراد بعد ${done} من ${todo.length}. اضغط «استيراد» مرة أخرى لإكمال الباقي، ولن يتكرر ما أُضيف.`;
     if (sheetState === s) renderImport();
     toastErr(err);
   } finally { st.inflight--; }
@@ -1335,14 +1336,14 @@ async function runImport(){
    entries are marked deleted, after the owner has downloaded a full Excel backup. */
 function openReset(){
   sheetState = {kind: 'reset', backed: false, busy: false, err: '', word: '', done: 0, total: 0};
-  openSheet(`${sheetHead('تصفير الدفتر', 'يشيل كل الزبائن والديون من التطبيق')}<div class="sheet-body" id="rs-body"></div><div class="sheet-foot" id="rs-foot"></div>`, renderReset);
+  openSheet(`${sheetHead('تصفير الدفتر', 'إزالة جميع الزبائن والديون من التطبيق')}<div class="sheet-body" id="rs-body"></div><div class="sheet-foot" id="rs-foot"></div>`, renderReset);
 }
 function renderReset(){
   const s = sheetState; if (!s || s.kind !== 'reset') return;
   const body = $('#rs-body'), foot = $('#rs-foot'); if (!body || !foot) return;
   const n = st.customers.length;
   if (!n && !s.busy) {
-    body.innerHTML = `<div class="empty">${ic('check')}<span>ماكو زبائن ولا ديون بالتطبيق. تكدر تستورد ملفك مباشرة.</span></div>`;
+    body.innerHTML = `<div class="empty">${ic('check')}<span>لا يوجد زبائن أو ديون في التطبيق. يمكنك استيراد ملفك مباشرة.</span></div>`;
     foot.innerHTML = `<button class="btn btn-primary grow" data-act="import">${ic('doc')}استيراد من إكسل</button>`;
     return;
   }
@@ -1351,13 +1352,13 @@ function renderReset(){
       <div class="kv"><span>الزبائن</span><b>${n}</b></div>
       <div class="kv"><span>المطلوب بالدينار</span>${amt(t.IQD, 'IQD')}</div>
       <div class="kv"><span>المطلوب بالدولار</span>${amt(t.USD, 'USD')}</div></div>
-    <p class="note">${ic('info')}<span>كل هذا ينشال. الموظفين والإعدادات وسجل الحركات يبقون، وما تنرسل رسائل للزبائن.</span></p>
-    <div class="step${s.backed ? ' done' : ''}"><b>١. نزّل نسخة احتياطية</b><span>ملف إكسل بكل الديون الحالية. إذا احتجتها بعدين، تستوردها من «استيراد من إكسل».</span>
-      <button class="btn ${s.backed ? 'btn-ghost' : 'btn-primary'} block" data-act="rs-backup" ${s.busy ? 'disabled' : ''}>${ic(s.backed ? 'check' : 'download')}${s.backed ? 'نزلت النسخة' : 'نزّل النسخة'}</button></div>
-    <div class="step${s.backed ? '' : ' off'}"><b>٢. اكتب «امسح» حتى تأكد</b>
+    <p class="note">${ic('info')}<span>ستُزال جميع هذه البيانات. يبقى الموظفون والإعدادات وسجل الحركات، ولن تُرسل أي رسائل للزبائن.</span></p>
+    <div class="step${s.backed ? ' done' : ''}"><b>١. نزّل نسخة احتياطية</b><span>ملف إكسل بجميع الديون الحالية. يمكنك استيرادها لاحقاً من «استيراد من إكسل» عند الحاجة.</span>
+      <button class="btn ${s.backed ? 'btn-ghost' : 'btn-primary'} block" data-act="rs-backup" ${s.busy ? 'disabled' : ''}>${ic(s.backed ? 'check' : 'download')}${s.backed ? 'تم تنزيل النسخة' : 'تنزيل النسخة'}</button></div>
+    <div class="step${s.backed ? '' : ' off'}"><b>٢. اكتب «امسح» للتأكيد</b>
       <input class="input" id="rs-word" autocomplete="off" placeholder="امسح" value="${esc(s.word)}" ${ready ? '' : 'disabled'}></div>
     ${s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : ''}`;
-  foot.innerHTML = `<button class="btn btn-danger grow" id="rs-go" data-act="rs-go" ${ready ? '' : 'disabled'}>${ic('trash')}${s.busy ? `جاري المسح… ${s.done} من ${s.total}` : 'امسح كل الديون'}</button>`;
+  foot.innerHTML = `<button class="btn btn-danger grow" id="rs-go" data-act="rs-go" ${ready ? '' : 'disabled'}>${ic('trash')}${s.busy ? `جاري المسح… ${s.done} من ${s.total}` : 'مسح جميع الديون'}</button>`;
 }
 function resetProgress(){ const s = sheetState, b = $('#rs-go'); if (s && b) b.textContent = `جاري المسح… ${s.done} من ${s.total}`; }
 async function resetBackup(btn){
@@ -1369,8 +1370,8 @@ async function resetBackup(btn){
 }
 async function runReset(){
   const s = sheetState; if (!s || s.kind !== 'reset' || s.busy || !s.backed) return;
-  if (norm(s.word) !== norm('امسح')) { s.err = 'اكتب كلمة «امسح» بالمربع حتى يمسح.'; renderReset(); return; }
-  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تمسح.'; renderReset(); return; }
+  if (norm(s.word) !== norm('امسح')) { s.err = 'اكتب كلمة «امسح» في المربع لتأكيد المسح.'; renderReset(); return; }
+  if (!navigator.onLine) { s.err = 'يتطلب المسح اتصالاً بالإنترنت.'; renderReset(); return; }
   Object.assign(s, {busy: true, err: '', done: 0, total: 0}); renderReset();
   const m = me(), now = Date.now();
   st.inflight++;
@@ -1396,11 +1397,11 @@ async function runReset(){
     await lb.commit();
     closeSheet();
     go({tab: 'customers', view: null, q: '', filter: 'all'});
-    toast('انمسحت كل الديون. هسه تكدر تستورد الملف الجديد');
+    toast('تم مسح جميع الديون. يمكنك الآن استيراد الملف الجديد');
   } catch (err) {
     console.warn(err);
     s.busy = false;
-    s.err = `وكف المسح بعد ${s.done} من ${s.total}. اضغط «امسح كل الديون» مرة ثانية حتى يكمل.`;
+    s.err = `توقف المسح بعد ${s.done} من ${s.total}. اضغط «مسح جميع الديون» مرة أخرى لإكماله.`;
     if (sheetState === s) renderReset();
     toastErr(err);
   } finally { st.inflight--; }
@@ -1410,7 +1411,7 @@ async function runReset(){
    A row finds its customer by name and area, or by name alone when only one customer has it. */
 function openPhones(){
   sheetState = {kind: 'phones', file: '', plan: null, busy: false, reading: false, err: ''};
-  openSheet(`${sheetHead('أرقام الهواتف من إكسل', 'تنحفظ للزبائن الموجودين، والديون ما تتغير')}<div class="sheet-body" id="ph-body"></div><div class="sheet-foot" id="ph-foot"></div>`, renderPhones);
+  openSheet(`${sheetHead('أرقام الهواتف من إكسل', 'تُحفظ للزبائن الحاليين دون تغيير ديونهم')}<div class="sheet-body" id="ph-body"></div><div class="sheet-foot" id="ph-foot"></div>`, renderPhones);
 }
 function planPhones(found){
   const {c, rows, start} = found, cell = (row, i) => i >= 0 && row[i] != null ? row[i] : '';
@@ -1434,30 +1435,30 @@ function renderPhones(){
   const s = sheetState; if (!s || s.kind !== 'phones') return;
   const body = $('#ph-body'), foot = $('#ph-foot'); if (!body || !foot) return;
   const warn = s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : '';
-  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.plan ? 'ملف ثاني' : 'اختار الملف'}<input type="file" id="ph-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
+  const pick = primary => `<label class="btn ${primary ? 'btn-primary' : 'btn-ghost'} grow filepick">${ic('doc')}${s.plan ? 'ملف آخر' : 'اختر الملف'}<input type="file" id="ph-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>`;
   if (!st.customers.length) {
-    body.innerHTML = `<div class="empty">${ic('users')}<span>ماكو زبائن بالتطبيق. استورد الملف من «استيراد من إكسل»، والأرقام اللي بي تدخل وياه.</span></div>`;
+    body.innerHTML = `<div class="empty">${ic('users')}<span>لا يوجد زبائن في التطبيق. استورد الملف من «استيراد من إكسل»، وستُضاف الأرقام الموجودة فيه معه.</span></div>`;
     foot.innerHTML = `<button class="btn btn-primary grow" data-act="import">${ic('doc')}استيراد من إكسل</button>`;
     return;
   }
   if (s.reading) { body.innerHTML = `<div class="empty"><div class="spin" role="status" aria-label="جاري القراءة"></div><span>جاري قراءة الملف…</span></div>`; foot.innerHTML = ''; return; }
   if (!s.plan) {
-    body.innerHTML = `<p class="lead">اختار ملف الإكسل اللي بي عمود «الاسم» وعمود «الهاتف». كل رقم ينحفظ للزبون اللي بنفس الاسم بالتطبيق.</p>
-      <p class="note">${ic('info')}<span>الديون والحركات ما تتغير، وما ينضاف زبون جديد. قبل الحفظ تشوف كل الأرقام.</span></p>${warn}`;
+    body.innerHTML = `<p class="lead">اختر ملف الإكسل الذي يحتوي على عمود «الاسم» وعمود «الهاتف». يُحفظ كل رقم للزبون الذي يحمل الاسم نفسه في التطبيق.</p>
+      <p class="note">${ic('info')}<span>لن تتغير الديون أو الحركات، ولن يُضاف أي زبون جديد. ستظهر لك جميع الأرقام قبل الحفظ.</span></p>${warn}`;
     foot.innerHTML = pick(true);
     return;
   }
   const P = s.plan, ups = [...P.update.values()].filter(u => !u.done);
   const line = (k, v) => `<div class="kv"><span>${k}</span><span class="vals"><b>${v}</b></span></div>`;
-  let h = `<div>${line('أرقام تنحفظ', ups.length)}${P.same ? line('نفس الرقم الموجود', P.same) : ''}</div>`;
-  if (P.missing.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.missing.length, 'اسم واحد', 'اسمين', 'أسماء', 'اسم')} ما لكيته بالتطبيق، فرقمه ما ينحفظ: ${esc(P.missing.join('، '))}</span></div>`;
-  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${countAr(P.bad.length, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} مو مضبوط وما ينحفظ: ${esc(P.bad.join('، '))}</span></div>`;
+  let h = `<div>${line('أرقام سيتم حفظها', ups.length)}${P.same ? line('مطابقة للرقم الحالي', P.same) : ''}</div>`;
+  if (P.missing.length) h += `<div class="warnbox soft">${ic('info')}<span>${P.missing.length === 1 ? 'لم يُعثر في التطبيق على هذا الاسم، لذا لن يُحفظ رقمه' : 'لم يُعثر في التطبيق على الأسماء التالية، لذا لن تُحفظ أرقامها'}: ${esc(P.missing.join('، '))}</span></div>`;
+  if (P.bad.length) h += `<div class="warnbox soft">${ic('info')}<span>${P.bad.length === 1 ? 'رقم غير صحيح لن يُحفظ' : 'أرقام غير صحيحة لن تُحفظ'}: ${esc(P.bad.join('، '))}</span></div>`;
   h += warn;
-  if (ups.length) h += `<div class="list">${ups.map(u => `<div class="imp-row"><span class="main"><b>${esc(u.cu.name)}</b><small>${[u.cu.note ? esc(u.cu.note) : '', u.cu.phone ? `يتبدل من <span dir="ltr">${esc(u.cu.phone)}</span>` : ''].filter(Boolean).join(' · ')}</small></span><span class="bal" dir="ltr">${esc(u.phone)}</span></div>`).join('')}</div>`;
+  if (ups.length) h += `<div class="list">${ups.map(u => `<div class="imp-row"><span class="main"><b>${esc(u.cu.name)}</b><small>${[u.cu.note ? esc(u.cu.note) : '', u.cu.phone ? `بدلاً من <span dir="ltr">${esc(u.cu.phone)}</span>` : ''].filter(Boolean).join(' · ')}</small></span><span class="bal" dir="ltr">${esc(u.phone)}</span></div>`).join('')}</div>`;
   body.innerHTML = h;
   foot.innerHTML = s.busy
     ? `<button class="btn btn-primary grow" id="ph-go" disabled>جاري الحفظ…</button>`
-    : `<button class="btn btn-primary grow" id="ph-go" data-act="ph-go" ${ups.length ? '' : 'disabled'}>${ic('check')}${ups.length ? `حفظ ${countAr(ups.length, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')}` : 'ماكو أرقام جديدة'}</button>${pick(false)}`;
+    : `<button class="btn btn-primary grow" id="ph-go" data-act="ph-go" ${ups.length ? '' : 'disabled'}>${ic('check')}${ups.length ? `حفظ ${countAr(ups.length, 'رقم واحد', 'رقمين', 'أرقام', 'رقماً')}` : 'لا توجد أرقام جديدة'}</button>${pick(false)}`;
 }
 async function readPhonesFile(file){
   const s = sheetState; if (!s || s.kind !== 'phones' || !file || s.busy) return;
@@ -1466,10 +1467,10 @@ async function readPhonesFile(file){
     if (!window.XLSX) { try { await loadScript(XLSX_URL); } catch (err) { throw new Error('reader'); } }
     const X = window.XLSX, found = findImportTable(X, X.read(await file.arrayBuffer(), {type: 'array'}), 'phone');
     if (found) s.plan = planPhones(found);
-    else s.err = 'ما لكيت بالملف عمود «الاسم» ووياه عمود «الهاتف».';
+    else s.err = 'لم يُعثر في الملف على عمود «الاسم» مع عمود «الهاتف».';
   } catch (err) {
     console.warn(err);
-    s.err = err && err.message === 'reader' ? 'ما گدرت أحمّل قارئ الإكسل. تأكد من النت وجرّب مرة ثانية.' : 'ما انفتح الملف. تأكد إنه ملف إكسل (xlsx).';
+    s.err = err && err.message === 'reader' ? 'تعذّر تحميل قارئ الإكسل. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.' : 'تعذّر فتح الملف. تأكد من أنه ملف إكسل (xlsx).';
   }
   s.reading = false;
   if (sheetState === s) renderPhones();
@@ -1478,7 +1479,7 @@ async function runPhones(){
   const s = sheetState; if (!s || s.kind !== 'phones' || !s.plan || s.busy) return;
   const ups = [...s.plan.update.values()].filter(u => !u.done);
   if (!ups.length) return;
-  if (!navigator.onLine) { s.err = 'لازم يكون اكو نت حتى تحفظ.'; renderPhones(); return; }
+  if (!navigator.onLine) { s.err = 'يتطلب الحفظ اتصالاً بالإنترنت.'; renderPhones(); return; }
   s.busy = true; s.err = ''; renderPhones();
   st.inflight++;
   try {
@@ -1495,11 +1496,11 @@ async function runPhones(){
     lb.set(doc(col('log')), Object.assign(logOf('phones', null), {count: total, file: s.file}));
     await lb.commit();
     closeSheet(); render();
-    toast(`انحفظ ${countAr(total, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} للزبائن`);
+    toast(`تم حفظ ${countAr(total, 'رقم واحد', 'رقمين', 'أرقام', 'رقماً')} للزبائن`);
   } catch (err) {
     console.warn(err);
     s.busy = false;
-    s.err = 'وكف الحفظ بالنص. اضغط «حفظ» مرة ثانية حتى يكمل الباقي.';
+    s.err = 'توقف الحفظ قبل اكتماله. اضغط «حفظ» مرة أخرى لإكمال الباقي.';
     if (sheetState === s) renderPhones();
     toastErr(err);
   } finally { st.inflight--; }
@@ -1511,13 +1512,13 @@ function moreScreen(){
   return `<div class="titlebar"><h1 class="h1">المزيد</h1></div>
     <section class="about"><img class="app-icon sm" src="icons/icon-192.png" alt=""><div><b>دفتر الديون</b><small>${esc(st.shop.name)}</small></div></section>
     <div class="list">
-      <button class="row" data-act="go" data-v="log"><span class="mi">${ic('list')}</span><span class="main"><span class="name">سجل الحركات</span><span class="sub">كل تسجيل وموافقة ورفض وتعديل وحذف، ومنو سواه</span></span>${ic('back', 'flip')}</button>
-      <button class="row" data-act="go" data-v="users"><span class="mi">${ic('shield')}</span><span class="main"><span class="name">الموظفين والصلاحيات</span><span class="sub">${waiting ? `<span class="pill wait">${countAr(waiting, 'واحد ينتظر التفعيل', 'اثنين ينتظرون التفعيل', 'ينتظرون التفعيل', 'ينتظرون التفعيل')}</span>` : countAr(team.length + 1, 'مستخدم واحد', 'مستخدمين اثنين', 'مستخدمين', 'مستخدم')}</span></span>${ic('back', 'flip')}</button>
-      <button class="row" data-act="go" data-v="settings"><span class="mi">${ic('store')}</span><span class="main"><span class="name">إعدادات المحل</span><span class="sub">الاسم والرقم اللي يطلعون بالرسائل</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="go" data-v="log"><span class="mi">${ic('list')}</span><span class="main"><span class="name">سجل الحركات</span><span class="sub">كل تسجيل وموافقة ورفض وتعديل وحذف، ومن قام به</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="go" data-v="users"><span class="mi">${ic('shield')}</span><span class="main"><span class="name">الموظفون والصلاحيات</span><span class="sub">${waiting ? `<span class="pill wait">${countAr(waiting, 'حساب واحد بانتظار التفعيل', 'حسابان بانتظار التفعيل', 'حسابات بانتظار التفعيل', 'حساباً بانتظار التفعيل')}</span>` : countAr(team.length + 1, 'مستخدم واحد', 'مستخدمان', 'مستخدمين', 'مستخدماً')}</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="go" data-v="settings"><span class="mi">${ic('store')}</span><span class="main"><span class="name">إعدادات المحل</span><span class="sub">الاسم والرقم اللذان يظهران في الرسائل</span></span>${ic('back', 'flip')}</button>
       <button class="row" data-act="import"><span class="mi">${ic('doc')}</span><span class="main"><span class="name">استيراد من إكسل</span><span class="sub">أرصدة الدفتر الورقي، أو نسخة احتياطية</span></span>${ic('back', 'flip')}</button>
-      <button class="row" data-act="phones"><span class="mi">${ic('phone')}</span><span class="main"><span class="name">أرقام الهواتف من إكسل</span><span class="sub">تحفظ أرقام الزبائن بدون ما تتغير ديونهم</span></span>${ic('back', 'flip')}</button>
-      <button class="row" data-act="reset"><span class="mi danger">${ic('trash')}</span><span class="main"><span class="name">تصفير الدفتر</span><span class="sub">يشيل كل الزبائن والديون قبل ما تستورد ملف جديد</span></span>${ic('back', 'flip')}</button>
-      ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">ثبّت التطبيق على الموبايل</span><span class="sub">حتى تطلع أيقونة محمود ناجي على الشاشة</span></span>${ic('back', 'flip')}</button>`}
+      <button class="row" data-act="phones"><span class="mi">${ic('phone')}</span><span class="main"><span class="name">أرقام الهواتف من إكسل</span><span class="sub">حفظ أرقام الزبائن دون تغيير ديونهم</span></span>${ic('back', 'flip')}</button>
+      <button class="row" data-act="reset"><span class="mi danger">${ic('trash')}</span><span class="main"><span class="name">تصفير الدفتر</span><span class="sub">إزالة جميع الزبائن والديون قبل استيراد ملف جديد</span></span>${ic('back', 'flip')}</button>
+      ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">تثبيت التطبيق على الهاتف</span><span class="sub">لتظهر أيقونة محمود ناجي على الشاشة الرئيسية</span></span>${ic('back', 'flip')}</button>`}
     </div>`;
 }
 const FIELD_AR = {type: 'النوع', amount: 'المبلغ', cur: 'العملة', note: 'الملاحظة', date: 'التاريخ', due: 'موعد التسديد', invNo: 'رقم القائمة'};
@@ -1532,14 +1533,14 @@ function logText(ev){
   const who = esc(uname(ev.by)), cn = ev.cname ? `<b>${esc(ev.cname)}</b>` : '';
   if (ev.coid) {
     const con = ev.coname ? `<b>${esc(ev.coname)}</b>` : 'شركة', T = CO_TYPES[ev.etype];
-    const cw = T ? `${ev.opening ? `رصيد سابق (${T.sign > 0 ? 'نطلبهم' : 'يطلبونا'})` : T.l} ${amtText(ev.amount, ev.cur)}` : '';
+    const cw = T ? `${ev.opening ? `رصيد سابق (${T.sign > 0 ? 'لنا' : 'علينا'})` : T.l} ${amtText(ev.amount, ev.cur)}` : '';
     switch (ev.type) {
-      case 'create': return `${who} سجّل ${cw} بحساب ${con}`;
-      case 'approve': return `${who} وافق على ${cw} بحساب ${con}`;
-      case 'reject': return `${who} رفض ${cw} بحساب ${con}${ev.reason ? `: ${esc(ev.reason)}` : ''}`;
-      case 'edit': return `${who} عدّل الوصل <span dir="ltr">${noTag(ev.no)}</span> بحساب ${con}: ${esc(changesText(ev.changes, ev.cur))}`;
+      case 'create': return `${who} سجّل ${cw} في حساب ${con}`;
+      case 'approve': return `${who} وافق على ${cw} في حساب ${con}`;
+      case 'reject': return `${who} رفض ${cw} في حساب ${con}${ev.reason ? `: ${esc(ev.reason)}` : ''}`;
+      case 'edit': return `${who} عدّل الوصل <span dir="ltr">${noTag(ev.no)}</span> في حساب ${con}: ${esc(changesText(ev.changes, ev.cur))}`;
       case 'delete': return `${who} حذف ${cw} من حساب ${con}`;
-      case 'restore': return `${who} رجّع ${cw} لحساب ${con}`;
+      case 'restore': return `${who} استعاد ${cw} إلى حساب ${con}`;
       case 'co_add': return `${who} أضاف الشركة ${con}`;
       case 'co_edit': return `${who} عدّل بيانات الشركة ${con}`;
     }
@@ -1548,73 +1549,73 @@ function logText(ev){
   const what = ev.etype ? `${ev.etype === 'debt' ? 'دين' : 'تسديد'} ${amtText(ev.amount, ev.cur)}` : '';
   switch (ev.type) {
     case 'create': return ev.etype === 'pay' ? `${who} سجّل ${what} من ${cn}` : `${who} سجّل ${what} على ${cn}`;
-    case 'approve': return `${who} وافق على ${what} بحساب ${cn}`;
-    case 'reject': return `${who} رفض ${what} بحساب ${cn}${ev.reason ? `: ${esc(ev.reason)}` : ''}`;
-    case 'edit': return `${who} عدّل الوصل <span dir="ltr">${noTag(ev.no)}</span> بحساب ${cn}: ${esc(changesText(ev.changes, ev.cur))}`;
+    case 'approve': return `${who} وافق على ${what} في حساب ${cn}`;
+    case 'reject': return `${who} رفض ${what} في حساب ${cn}${ev.reason ? `: ${esc(ev.reason)}` : ''}`;
+    case 'edit': return `${who} عدّل الوصل <span dir="ltr">${noTag(ev.no)}</span> في حساب ${cn}: ${esc(changesText(ev.changes, ev.cur))}`;
     case 'delete': return `${who} حذف ${what} من حساب ${cn}`;
-    case 'restore': return `${who} رجّع ${what} لحساب ${cn}`;
+    case 'restore': return `${who} استعاد ${what} إلى حساب ${cn}`;
     case 'customer_add': return `${who} أضاف الزبون ${cn}`;
     case 'customer_edit': return `${who} عدّل بيانات ${cn}`;
-    case 'user_role': return `${who} غيّر لقب ${esc(ev.name)} إلى ${ROLES[ev.role] || ''}`;
-    case 'user_perm': return `${who} ${ev.on ? 'عطى' : 'شال من'} ${esc(ev.name)} صلاحية ${PERM_SHORT[ev.perm] || ''}`;
+    case 'user_role': return `${who} غيّر المسمى الوظيفي لحساب ${esc(ev.name)} إلى ${ROLES[ev.role] || ''}`;
+    case 'user_perm': return `${who} ${ev.on ? 'منح' : 'سحب من'} ${esc(ev.name)} صلاحية «${PERM_SHORT[ev.perm] || ''}»`;
     case 'user_active': return `${who} ${ev.active ? 'فعّل' : 'أوقف'} حساب ${esc(ev.name)}`;
-    case 'user_removed': return `${who} شال حساب ${esc(ev.name)}`;
-    case 'user_restored': return `${who} رجّع حساب ${esc(ev.name)}`;
+    case 'user_removed': return `${who} أزال حساب ${esc(ev.name)}`;
+    case 'user_restored': return `${who} استعاد حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
-    case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} وأرصدتهم من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
-    case 'phones': return `${who} حفظ ${countAr(ev.count || 0, 'رقم واحد', 'رقمين', 'أرقام', 'رقم')} هواتف للزبائن من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
-    case 'reset': return `${who} صفّر الدفتر وشال ${countAr(ev.customers || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبون')} و${countAr(ev.entries || 0, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}`;
+    case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبوناً واحداً', 'زبونين', 'زبائن', 'زبوناً')} مع الأرصدة من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
+    case 'phones': return `${who} حفظ أرقام هواتف ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبوناً')} من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
+    case 'reset': return `${who} صفّر الدفتر وأزال ${countAr(ev.customers || 0, 'زبوناً واحداً', 'زبونين', 'زبائن', 'زبوناً')} و${countAr(ev.entries || 0, 'حركة واحدة', 'حركتين', 'حركات', 'حركة')}`;
   }
   return '';
 }
 const EV_IC = {co_add: 'building', co_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
-  let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
-  if (!st.logList.length) return h + `<div class="empty">${ic('list')}<span>بعد ماكو حركات.</span></div>`;
+  let h = '<p class="lead">يُحفظ هنا كل ما يجري في الدفتر، ولا يمكن لأحد مسحه. ويمكنك استعادة الحركة المحذوفة.</p>';
+  if (!st.logList.length) return h + `<div class="empty">${ic('list')}<span>لا توجد حركات بعد.</span></div>`;
   let lastDay = '', open = false;
   for (const ev of st.logList) {
     const day = isoOf(new Date(ev.at));
     if (day !== lastDay) { if (open) h += '</div>'; const rd = relDay(day); h += `<div class="day-h">${rd === 'اليوم' || rd === 'أمس' ? rd + '، ' + fmtDate(day) : fmtDate(day)}</div><div class="list">`; lastDay = day; open = true; }
     const e = ev.eid ? ent(ev.eid) : null;
-    const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}" data-co="${ev.coid ? 1 : ''}">${ic('undo')}رجّعها</button>` : '';
+    const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}" data-co="${ev.coid ? 1 : ''}">${ic('undo')}استعادة</button>` : '';
     h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && (!e || e.status === 'deleted') ? restore : ''}</div>`;
   }
   return h + (open ? '</div>' : '');
 }
 function usersScreen(){
   const link = appLink();
-  let h = `<p class="lead">كل موظف يفتح رابط التطبيق من موبايله ويسوي حساب بإيميله، وبعدها يطلع هنا حتى تفعّله وتختار صلاحياته.</p>
+  let h = `<p class="lead">يفتح كل موظف رابط التطبيق من هاتفه وينشئ حساباً ببريده الإلكتروني، ثم يظهر هنا لتفعيله وتحديد صلاحياته.</p>
     <div class="linkbox"><span dir="ltr">${esc(link)}</span><button class="mini" data-act="copy" data-text="${esc(link)}">${ic('copy')}نسخ الرابط</button></div>`;
   const waiting = st.users.filter(u => u.role !== 'owner' && !u.removed && !u.active && !u.code);
-  if (waiting.length) h += `<section class="stack"><div class="sec-h"><h2>ينتظرون التفعيل</h2><span>${waiting.length}</span></div><div class="list">${waiting.map(u =>
-    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="iconbtn danger" data-act="rm-user" data-id="${u.id}" aria-label="شيل حساب ${esc(u.name)}">${ic('trash')}</button><button class="btn btn-primary" data-act="activate" data-id="${u.id}">تفعيل</button></div>`).join('')}</div></section>`;
+  if (waiting.length) h += `<section class="stack"><div class="sec-h"><h2>بانتظار التفعيل</h2><span>${waiting.length}</span></div><div class="list">${waiting.map(u =>
+    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="iconbtn danger" data-act="rm-user" data-id="${u.id}" aria-label="إزالة حساب ${esc(u.name)}">${ic('trash')}</button><button class="btn btn-primary" data-act="activate" data-id="${u.id}">تفعيل</button></div>`).join('')}</div></section>`;
   h += '<div class="list">';
   for (const u of st.users.filter(x => x.role === 'owner' || (!x.removed && (x.active || x.code)))) {
-    if (u.role === 'owner') { h += `<div class="row" style="cursor:default"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)}</span><span class="sub">صاحب الدفتر، وعنده كل الصلاحيات</span></span><span class="role owner">المدير</span></div>`; continue; }
+    if (u.role === 'owner') { h += `<div class="row" style="cursor:default"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)}</span><span class="sub">صاحب الدفتر، ولديه جميع الصلاحيات</span></span><span class="role owner">المدير</span></div>`; continue; }
     const on = PERMS.filter(p => u.perms && u.perms[p.k]);
-    const pills = !u.active ? '<span class="pill late">الحساب موقوف</span>' : on.length ? on.map(p => `<span class="pill ${p.k === 'messages' ? 'ok' : 'off'}">${PERM_SHORT[p.k]}</span>`).join('') : '<span class="pill off">يسجل بس</span>';
+    const pills = !u.active ? '<span class="pill late">الحساب موقوف</span>' : on.length ? on.map(p => `<span class="pill ${p.k === 'messages' ? 'ok' : 'off'}">${PERM_SHORT[p.k]}</span>`).join('') : '<span class="pill off">تسجيل فقط</span>';
     h += `<button class="row" data-act="edit-user" data-id="${u.id}"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)} <span class="role">${ROLES[u.role]}</span></span><span class="pills">${pills}</span></span>${ic('back', 'flip')}</button>`;
   }
   h += '</div>';
   const removed = st.users.filter(u => u.role !== 'owner' && u.removed);
-  if (removed.length) h += `<section class="stack"><div class="sec-h"><h2>حسابات مشالة</h2><span>${removed.length}</span></div><div class="list">${removed.map(u =>
-    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="mini" data-act="unrm-user" data-id="${u.id}">${ic('undo')}رجّعه</button></div>`).join('')}</div></section>`;
-  h += `<section class="stack"><div class="sec-h"><h2>بس إلك</h2></div><div class="list perm" style="padding:0 14px">${OWNER_ONLY.map(x => `<div class="kv"><span>${x}</span>${ic('shield')}</div>`).join('')}</div></section>`;
+  if (removed.length) h += `<section class="stack"><div class="sec-h"><h2>حسابات مُزالة</h2><span>${removed.length}</span></div><div class="list">${removed.map(u =>
+    `<div class="urow"><span class="av">${esc(initial(u.name))}</span><span class="main"><b>${esc(u.name)}</b><small dir="ltr">${esc(u.email || '')}</small></span><button class="mini" data-act="unrm-user" data-id="${u.id}">${ic('undo')}استعادة</button></div>`).join('')}</div></section>`;
+  h += `<section class="stack"><div class="sec-h"><h2>صلاحيات خاصة بك</h2></div><div class="list perm" style="padding:0 14px">${OWNER_ONLY.map(x => `<div class="kv"><span>${x}</span>${ic('shield')}</div>`).join('')}</div></section>`;
   return h;
 }
 // Accounts are never deleted (the rules forbid it, and old receipts keep showing who wrote them):
 // a removed account is switched off, leaves every list, and can be brought back.
 function openRemoveUser(id){
   const u = userById(id); if (!u || u.role === 'owner') return;
-  openSheet(`${sheetHead(`شيل حساب ${esc(u.name)}؟`, u.email ? `<span dir="ltr">${esc(u.email)}</span>` : '')}
-    <div class="sheet-body"><p class="lead" style="color:var(--ink)">ما يكدر يدخل للتطبيق بعد، ويختفي من قائمة الموظفين. الحركات اللي سجلها تبقى باسمه بالدفتر وبالسجل.</p>
-      <p class="note">${ic('info')}<span>إذا احتجته، ترجّعه من «حسابات مشالة» بأسفل صفحة الموظفين.</span></p></div>
-    <div class="sheet-foot"><button class="btn btn-danger grow" data-act="rm-user-go" data-id="${u.id}">${ic('trash')}شيل الحساب</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
+  openSheet(`${sheetHead(`إزالة حساب ${esc(u.name)}؟`, u.email ? `<span dir="ltr">${esc(u.email)}</span>` : '')}
+    <div class="sheet-body"><p class="lead" style="color:var(--ink)">لن يتمكن من الدخول إلى التطبيق، وسيختفي من قائمة الموظفين. تبقى الحركات التي سجّلها باسمه في الدفتر والسجل.</p>
+      <p class="note">${ic('info')}<span>يمكنك استعادته عند الحاجة من «حسابات مُزالة» أسفل صفحة الموظفين.</span></p></div>
+    <div class="sheet-foot"><button class="btn btn-danger grow" data-act="rm-user-go" data-id="${u.id}">${ic('trash')}إزالة الحساب</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
 }
 function settingsScreen(){
   return `<form class="form" id="settings-form" novalidate>
-    <p class="lead">هاي المعلومات تطلع بكل رسالة واتساب توصل للزبون.</p>
+    <p class="lead">تظهر هذه المعلومات في كل رسالة واتساب تصل إلى الزبون.</p>
     <div class="field"><label for="s-name">اسم المحل</label><input class="input" id="s-name" value="${esc(st.shop.name)}" autocomplete="organization"></div>
     <div class="field"><label for="s-phone">رقم المحل للاستفسار</label><input class="input" id="s-phone" dir="ltr" inputmode="tel" placeholder="07XX XXX XXXX" value="${esc(st.shop.phone)}"></div>
     <button class="btn btn-primary block" type="submit">حفظ</button></form>`;
@@ -1632,7 +1633,7 @@ function openMessage(title, cid, text){
   const c = cust(cid) || {name: '', phone: ''};
   openSheet(`${sheetHead(esc(title), `إلى ${esc(c.name)}${c.phone ? ` · <span dir="ltr">${esc(c.phone)}</span>` : ''}`)}
     <div class="sheet-body"><div class="bubble" id="msg">${esc(text)}</div>
-    ${c.phone ? '' : `<p class="note">${ic('info')}<span>هذا الزبون ما عنده رقم، فالواتساب يخليك تختار المحادثة بنفسك. تكدر تضيف رقمه من «تعديل».</span></p>`}</div>
+    ${c.phone ? '' : `<p class="note">${ic('info')}<span>لا يوجد رقم لهذا الزبون، لذا سيطلب منك واتساب اختيار المحادثة بنفسك. يمكنك إضافة رقمه من «تعديل».</span></p>`}</div>
     <div class="sheet-foot"><a class="btn btn-wa grow" href="${esc(waHref(c, text))}" target="_blank" rel="noopener">${ic('wa')}فتح واتساب</a><button class="btn btn-ghost" data-act="copy-msg">${ic('copy')}نسخ</button></div>`);
 }
 const messageFor = (e, b) => e.type === 'debt' ? ['رسالة الدين للزبون', msgDebt(e, b)] : ['وصل التسديد للزبون', msgPay(e, b)];
@@ -1648,12 +1649,12 @@ function bulkSave(set){ try { localStorage.setItem(bulkKey(), JSON.stringify([..
 async function openBulk(){
   sheetState = {kind: 'bulk', byC: null, sent: bulkLoad(), phones: {}, err: ''};
   const s = sheetState;
-  openSheet(`${sheetHead('إرسال الكشف للكل', '<span id="bk-sub"></span>')}<div class="sheet-body" id="bk-body"></div><div class="sheet-foot" id="bk-foot"></div>`, renderBulk);
+  openSheet(`${sheetHead('إرسال كشف الحساب للجميع', '<span id="bk-sub"></span>')}<div class="sheet-body" id="bk-body"></div><div class="sheet-foot" id="bk-foot"></div>`, renderBulk);
   try {
     const byC = {};
     for (const e of ents(await getDocs(col('entries')))) if (e.status === 'approved') (byC[e.cid] = byC[e.cid] || []).push(e);
     s.byC = byC;
-  } catch (err) { s.err = 'ما گدرت أجيب الحسابات. تأكد من النت وجرّب مرة ثانية.'; toastErr(err); }
+  } catch (err) { s.err = 'تعذّر جلب الحسابات. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.'; toastErr(err); }
   if (sheetState === s) renderBulk();
 }
 function bulkRows(){
@@ -1673,21 +1674,21 @@ function renderBulk(){
   if (!s.byC) { body.innerHTML = loadingBox(); foot.innerHTML = ''; return; }
   const rows = bulkRows(), done = rows.filter(r => s.sent.has(r.c.id)).length, next = rows.find(r => !s.sent.has(r.c.id));
   const canPhone = can.editCustomer(me());
-  if (sub) sub.textContent = countAr(rows.length, 'زبون واحد عليه دين', 'زبونين عليهم دين', 'زبائن عليهم دين', 'زبون عليهم دين');
+  if (sub) sub.textContent = countAr(rows.length, 'زبون واحد عليه دين', 'زبونان عليهما دين', 'زبائن عليهم دين', 'زبوناً عليهم دين');
   const pct = rows.length ? Math.round(done / rows.length * 100) : 100;
-  let h = `<div class="stack" style="gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:14px"><b>انرسل ${done} من ${rows.length}</b>${done ? '<button class="linkbtn" data-act="bulk-restart">ابدي من جديد</button>' : ''}</div><div class="meter"><i style="width:${pct}%"></i></div></div>
-    <p class="note">${ic('info')}<span>كل ضغطة تفتح الواتساب على كشف زبون جاهز. اضغط إرسال بالواتساب، وارجع للتطبيق للي بعده.${canPhone ? ' اللي ما عنده رقم، اكتب رقمه جنب اسمه وينحفظ وياه.' : ''}</span></p>
+  let h = `<div class="stack" style="gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:14px"><b>أُرسل ${done} من ${rows.length}</b>${done ? '<button class="linkbtn" data-act="bulk-restart">البدء من جديد</button>' : ''}</div><div class="meter"><i style="width:${pct}%"></i></div></div>
+    <p class="note">${ic('info')}<span>كل ضغطة تفتح واتساب على كشف حساب زبون جاهز. اضغط «إرسال» في واتساب، ثم عد إلى التطبيق للزبون التالي.${canPhone ? ' إذا لم يكن للزبون رقم، اكتب رقمه بجانب اسمه ليُحفظ معه.' : ''}</span></p>
     <div class="list">${rows.map(r => {
       const sent = s.sent.has(r.c.id), amts = ['IQD', 'USD'].filter(cur => r.b[cur] > 0).map(cur => amt(r.b[cur], cur, 'owe')).join('');
       const phoneIn = !r.c.phone && canPhone ? `<input class="input bulk-phone" data-cid="${r.c.id}" inputmode="tel" dir="ltr" placeholder="رقم الواتساب" value="${esc(s.phones[r.c.id] || '')}" aria-label="رقم واتساب ${esc(r.c.name)}">` : '';
       const noPhone = !bulkPhone(s, r.c) && !phoneIn ? '<span class="pill off">بدون رقم</span>' : '';
       return `<div class="bulk-row${sent ? ' sent' : ''}"><span class="main"><b>${esc(r.c.name)}</b><small>${r.c.note ? esc(r.c.note) : ''}${noPhone}</small><span class="bal">${amts}</span>${phoneIn}</span>
-        <a class="btn ${sent ? 'btn-ghost' : 'btn-wa'} bulk-send" data-bulk="${r.c.id}" href="${esc(bulkHref(s, r))}" target="_blank" rel="noopener">${ic(sent ? 'check' : 'wa')}${sent ? 'انرسل' : 'إرسال'}</a></div>`;
+        <a class="btn ${sent ? 'btn-ghost' : 'btn-wa'} bulk-send" data-bulk="${r.c.id}" href="${esc(bulkHref(s, r))}" target="_blank" rel="noopener">${ic(sent ? 'check' : 'wa')}${sent ? 'أُرسل' : 'إرسال'}</a></div>`;
     }).join('')}</div>`;
   body.innerHTML = h;
   foot.innerHTML = next
-    ? `<a class="btn btn-wa grow" data-bulk="${next.c.id}" href="${esc(bulkHref(s, next))}" target="_blank" rel="noopener">${ic('wa')}<span class="ell">إرسال لـ${esc(next.c.name)}</span></a>`
-    : `<button class="btn btn-ghost grow" data-act="close-sheet">${ic('check')}انرسل الكشف للكل</button>`;
+    ? `<a class="btn btn-wa grow" data-bulk="${next.c.id}" href="${esc(bulkHref(s, next))}" target="_blank" rel="noopener">${ic('wa')}<span class="ell">إرسال إلى ${esc(next.c.name)}</span></a>`
+    : `<button class="btn btn-ghost grow" data-act="close-sheet">${ic('check')}تم إرسال الكشف للجميع</button>`;
 }
 function bulkSent(cid){
   const s = sheetState; if (!s || s.kind !== 'bulk' || !s.byC) return;
@@ -1721,7 +1722,7 @@ function openEntryForm(o){
         <div class="field" id="f-due-wrap"><label for="f-due">موعد التسديد</label><input class="input" id="f-due" type="date" value="${sheetState.due || ''}"></div></div>
       <div class="chips wrap" id="f-due-chips" role="group" aria-label="مواعيد سريعة"></div>
       <div id="f-warn" class="stack" style="gap:8px"></div>
-      ${isStaff && !ed ? `<p class="note">${ic('clock')}<span>تنرسل إلى ${esc(ownerName())} حتى يوافق عليها، وبعدها تنحسب على الزبون.</span></p>` : ''}
+      ${isStaff && !ed ? `<p class="note">${ic('clock')}<span>تُرسل إلى ${esc(ownerName())} للموافقة عليها، ثم تُحتسب على الزبون.</span></p>` : ''}
     </form>
     <div class="sheet-foot"><button class="btn btn-primary grow" data-act="f-save">${isStaff && !ed ? 'إرسال للموافقة' : 'حفظ'}</button></div>`,
     () => { formSync(); const a = $('#f-amount'); if (a && !ed) a.focus({preventScroll: true}); });
@@ -1748,11 +1749,11 @@ function formSync(){
   if (amount > 0 && isDebt) {
     const add = st2.edit && st2.edit.status === 'approved' && st2.edit.cur === st2.cur ? amount - st2.edit.amount : amount;
     const lc = limitCheck(st2.cid, st2.cur, add, st2.edit ? st2.edit.id : null);
-    if (lc) warns.push(`<div class="warnbox">${ic('alert')}<span>هذا الدين يخلي رصيد الزبون ${amtText(lc.projected, lc.cur)}، أكثر من سقفه (${amtText(lc.lim, lc.cur)}) بـ ${amtText(lc.over, lc.cur)}.</span></div>`);
+    if (lc) warns.push(`<div class="warnbox">${ic('alert')}<span>سيصبح رصيد الزبون بعد هذا الدين ${amtText(lc.projected, lc.cur)}، متجاوزاً سقفه (${amtText(lc.lim, lc.cur)}) بمقدار ${amtText(lc.over, lc.cur)}.</span></div>`);
   }
   if (amount > 0 && !isDebt && !st2.edit) {
     const b = bal(st2.cid)[st2.cur];
-    if (amount > b) warns.push(`<div class="warnbox soft">${ic('info')}<span>${b > 0 ? `المبلغ أكثر من الرصيد (${amtText(b, st2.cur)}).` : `ماكو رصيد عليه بال${CUR_WORD[st2.cur]}.`} الزبون راح يصير إله رصيد عندكم.</span></div>`);
+    if (amount > b) warns.push(`<div class="warnbox soft">${ic('info')}<span>${b > 0 ? `المبلغ أكبر من الرصيد (${amtText(b, st2.cur)}).` : `لا يوجد رصيد مستحق عليه بال${CUR_WORD[st2.cur]}.`} سيصبح للزبون رصيد لدينا.</span></div>`);
   }
   if (st2.err) warns.unshift(`<div class="warnbox">${ic('alert')}<span>${st2.err}</span></div>`);
   $('#f-warn').innerHTML = warns.join('');
@@ -1771,21 +1772,21 @@ function saveEntryForm(){
   let amount = parseAmount($('#f-amount').value);
   const date = $('#f-date').value || todayISO();
   const due = s.type === 'debt' ? ($('#f-due').value || null) : null;
-  if (!(amount > 0)) { s.err = 'اكتب المبلغ.'; formSync(); $('#f-amount').focus(); return; }
+  if (!(amount > 0)) { s.err = 'أدخل المبلغ.'; formSync(); $('#f-amount').focus(); return; }
   if (s.cur === 'IQD') amount = Math.round(amount); else amount = r2(amount);
-  if (due && due < date) { s.err = 'موعد التسديد لازم يكون بعد تاريخ الدين.'; formSync(); return; }
+  if (due && due < date) { s.err = 'يجب أن يكون موعد التسديد بعد تاريخ الدين.'; formSync(); return; }
   const note = $('#f-note').value.trim();
   if (s.edit) {
     const fresh = ent(s.edit.id) || s.edit;
     const changed = editEntry(fresh, {amount, cur: s.cur, note, date, due});
     closeSheet(); render();
-    toast(changed ? 'انحفظ التعديل، وانكتب بالسجل' : 'ماكو تغيير');
+    toast(changed ? 'تم حفظ التعديل وتسجيله في السجل' : 'لا يوجد تغيير');
     return;
   }
   const before = bal(s.cid);
   const e = addEntry({cid: s.cid, type: s.type, amount, cur: s.cur, note, date, due});
   if (e.status === 'approved') { const [t, m] = messageFor(e, withEffect(before, e)); render(); openMessage(t, e.cid, m); }
-  else { closeSheet(); render(); toast(`انرسلت إلى ${ownerName()} حتى يوافق عليها`); }
+  else { closeSheet(); render(); toast(`أُرسلت إلى ${ownerName()} للموافقة`); }
 }
 function openEntryDetail(id){
   const e = ent(id); if (!e) return;
@@ -1798,19 +1799,19 @@ function openEntryDetail(id){
   rows.push([inv ? 'المادة' : 'ملاحظة', e.note ? esc(e.note) : '—'], ['التاريخ', fmtDate(e.date, true)]);
   if (inv) rows.push(['موعد التسديد', e.due ? fmtDate(e.due, true) : 'بدون موعد']);
   rows.push(['رقم الوصل', `<span dir="ltr">${noTag(e.no)}</span>`], ['الحالة', `<span class="pill ${e.status === 'approved' ? 'ok' : e.status === 'pending' ? 'wait' : e.status === 'rejected' ? 'late' : 'off'}">${STATUS[e.status] || ''}</span>`]);
-  const trail = [{t: e.at, i: 'plus', c: 'create', x: `سجلها ${esc(uname(e.by))}${e.approvedBy && e.approvedBy === e.by ? '، وانحسبت مباشرة' : ''}`}];
+  const trail = [{t: e.at, i: 'plus', c: 'create', x: `سجّلها ${esc(uname(e.by))}${e.approvedBy && e.approvedBy === e.by ? '، واحتُسبت مباشرة' : ''}`}];
   for (const edt of (e.edits || [])) trail.push({t: edt.at, i: 'edit', c: 'edit', x: `عدّلها ${esc(uname(edt.by))}: ${esc(changesText(edt.changes, e.cur))}`});
   if (e.approvedBy && e.approvedBy !== e.by) trail.push({t: e.approvedAt, i: 'check', c: 'approve', x: `وافق عليها ${esc(uname(e.approvedBy))}`});
   if (e.rejectedAt) trail.push({t: e.rejectedAt, i: 'x', c: 'reject', x: `رفضها ${esc(uname(e.rejectedBy))}${e.reason ? `: ${esc(e.reason)}` : ''}`});
   if (e.deletedAt) trail.push({t: e.deletedAt, i: 'trash', c: 'delete', x: `حذفها ${esc(uname(e.deletedBy))}`});
-  if (e.restoredAt) trail.push({t: e.restoredAt, i: 'undo', c: 'restore', x: `رجّعها ${esc(uname(e.restoredBy))}`});
+  if (e.restoredAt) trail.push({t: e.restoredAt, i: 'undo', c: 'restore', x: `استعادها ${esc(uname(e.restoredBy))}`});
   trail.sort((a, b) => a.t - b.t);
   const btns = [];
   if (can.approve(u) && e.status === 'pending') btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`, `<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`);
   if (can.editEntry(u, e)) btns.push(`<button class="btn btn-ghost grow" data-act="edit-entry" data-id="${e.id}">${ic('edit')}تعديل</button>`);
   if (!isCo && can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
   if (can.deleteEntry(u, e)) btns.push(`<button class="btn btn-ghost danger" data-act="del-entry" data-id="${e.id}" aria-label="حذف">${ic('trash')}</button>`);
-  if (e.status === 'deleted' && u.role === 'owner') btns.push(`<button class="btn btn-ghost grow" data-act="restore" data-id="${e.id}" data-co="${isCo ? 1 : ''}">${ic('undo')}رجّعها</button>`);
+  if (e.status === 'deleted' && u.role === 'owner') btns.push(`<button class="btn btn-ghost grow" data-act="restore" data-id="${e.id}" data-co="${isCo ? 1 : ''}">${ic('undo')}استعادة</button>`);
   openSheet(`${sheetHead(`${label} <span dir="ltr">${noTag(e.no)}</span>`, esc(partyName(e)))}
     <div class="sheet-body"><div>${rows.map(([k, v, raw]) => `<div class="kv"><span>${k}</span>${raw ? v : `<span>${v}</span>`}</div>`).join('')}</div>
     <div class="stack" style="gap:6px"><span class="lbl">مراحل الحركة</span><div class="trail">${trail.map(s => `<div class="ev"><span class="ev-ic ${s.c}">${ic(s.i)}</span><div class="ev-body"><p>${s.x}</p><small>${fmtStamp(s.t)}</small></div></div>`).join('')}</div></div></div>
@@ -1819,19 +1820,19 @@ function openEntryDetail(id){
 function openReject(id){
   const e = ent(id), isCo = !!e.coid, who = isCo ? 'الشركة' : 'الزبون';
   sheetState = {kind: 'reject', id};
-  const reasons = isCo ? ['المبلغ غلط', 'الشركة غلط', 'مكررة', 'رقم القائمة غلط'] : ['المبلغ غلط', 'الزبون غلط', 'مكررة', 'ما استلمنا الفلوس'];
+  const reasons = isCo ? ['المبلغ غير صحيح', 'الشركة غير صحيحة', 'مكررة', 'رقم القائمة غير صحيح'] : ['المبلغ غير صحيح', 'الزبون غير صحيح', 'مكررة', 'لم نستلم المبلغ'];
   openSheet(`${sheetHead('رفض الحركة', `${esc(partyName(e))} · ${entryLabel(e)} ${amtText(e.amount, e.cur)}`)}
     <form class="sheet-body" id="reject-form" novalidate>
       <div class="chips wrap" role="group" aria-label="أسباب جاهزة">${reasons.map(r => `<button type="button" class="chip" data-act="reason" data-v="${esc(r)}">${esc(r)}</button>`).join('')}</div>
-      <div class="field"><label for="r-reason">سبب الرفض</label><textarea class="input" id="r-reason" placeholder="اكتب السبب حتى ${esc(uname(e.by))} يعرف شنو يصلح"></textarea></div>
-      <p class="note">${ic('info')}<span>الحركة ما تنحسب على ${who}، و${esc(uname(e.by))} يشوف السبب بصفحة طلباته.</span></p>
+      <div class="field"><label for="r-reason">سبب الرفض</label><textarea class="input" id="r-reason" placeholder="اكتب السبب ليعرف ${esc(uname(e.by))} ما يجب تصحيحه"></textarea></div>
+      <p class="note">${ic('info')}<span>لن تُحتسب الحركة على ${who}، وسيرى ${esc(uname(e.by))} السبب في صفحة طلباته.</span></p>
     </form>
     <div class="sheet-foot"><button class="btn btn-danger grow" data-act="do-reject" data-id="${id}">${ic('x')}رفض</button></div>`);
 }
 function openDelete(id){
   const e = ent(id), name = esc(partyName(e));
   openSheet(`${sheetHead(`حذف الوصل <span dir="ltr">${noTag(e.no)}</span>؟`, name)}
-    <div class="sheet-body"><p class="lead" style="color:var(--ink)">${entryLabel(e)} ${amtText(e.amount, e.cur)}${e.note ? ` (${esc(e.note)})` : ''} ينشال من حساب ${name} وما ينحسب. يبقى بسجل الحركات وتكدر ترجعه.</p></div>
+    <div class="sheet-body"><p class="lead" style="color:var(--ink)">${entryLabel(e)} ${amtText(e.amount, e.cur)}${e.note ? ` (${esc(e.note)})` : ''} سيُزال من حساب ${name} ولن يُحتسب، ويبقى في سجل الحركات ويمكنك استعادته.</p></div>
     <div class="sheet-foot"><button class="btn btn-danger grow" data-act="confirm-del" data-id="${id}">${ic('trash')}حذف</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
 }
 function openCustomerForm(cid, presetName){
@@ -1840,11 +1841,11 @@ function openCustomerForm(cid, presetName){
   const limitF = can.setLimit(u) ? `<div class="field"><span class="lbl">سقف الدين (اختياري)</span><div class="two">
       <input class="input" id="c-lim-iqd" inputmode="numeric" dir="ltr" placeholder="بالدينار" aria-label="السقف بالدينار" data-money="IQD" value="${c && c.limitIQD ? fmtNum(c.limitIQD, 'IQD') : ''}">
       <input class="input" id="c-lim-usd" inputmode="decimal" dir="ltr" placeholder="بالدولار" aria-label="السقف بالدولار" data-money="USD" value="${c && c.limitUSD ? fmtNum(c.limitUSD, 'USD') : ''}"></div>
-      <span class="note">${ic('info')}<span>إذا دين جديد يعدّي السقف، يطلعلك تنبيه قبل ما توافق.</span></span></div>` : '';
+      <span class="note">${ic('info')}<span>إذا تجاوز دين جديد السقف، سيظهر لك تنبيه قبل الموافقة.</span></span></div>` : '';
   const opening = c ? '' : `<div class="field"><label for="c-open">رصيد سابق من الدفتر الورقي (اختياري)</label>
       <div class="amount-row"><input class="input amount" id="c-open" inputmode="decimal" dir="ltr" autocomplete="off" placeholder="0" style="font-size:22px">
       <div class="seg cur" role="group" aria-label="عملة الرصيد السابق"><button type="button" data-act="c-cur" data-v="IQD" aria-pressed="true">د.ع</button><button type="button" data-act="c-cur" data-v="USD" aria-pressed="false">$</button></div></div>
-      <span class="note">${ic('info')}<span>ينسجل كحركة وحدة باسم «رصيد سابق من الدفتر»${u.role === 'owner' ? '' : `، وتنتظر موافقة ${esc(ownerName())}`}.</span></span></div>`;
+      <span class="note">${ic('info')}<span>يُسجَّل كحركة واحدة باسم «رصيد سابق من الدفتر»${u.role === 'owner' ? '' : `، وينتظر موافقة ${esc(ownerName())}`}.</span></span></div>`;
   openSheet(`${sheetHead(c ? 'تعديل الزبون' : 'زبون جديد', c ? esc(c.name) : '')}
     <form class="sheet-body" id="cust-form" novalidate>
       <div class="field"><label for="c-name">الاسم</label><input class="input" id="c-name" autocomplete="off" placeholder="اسم الزبون أو المحل" value="${esc(c ? c.name : (presetName || ''))}"></div>
@@ -1859,21 +1860,21 @@ function saveCustomerForm(){
   const s = sheetState, u = me();
   const name = $('#c-name').value.trim().replace(/\s+/g, ' ');
   const warn = msg => { $('#c-warn').innerHTML = `<div class="warnbox">${ic('alert')}<span>${msg}</span></div>`; };
-  if (!name) { warn('اكتب اسم الزبون.'); $('#c-name').focus(); return; }
+  if (!name) { warn('أدخل اسم الزبون.'); $('#c-name').focus(); return; }
   const patch = {name, phone: $('#c-phone').value.trim(), note: $('#c-note').value.trim()};
   if (can.setLimit(u)) {
     const li = parseAmount($('#c-lim-iqd').value), lu = parseAmount($('#c-lim-usd').value);
     patch.limitIQD = li > 0 ? Math.round(li) : 0; patch.limitUSD = lu > 0 ? r2(lu) : 0;
   }
-  if (s.cid) { const ch = editCustomer(s.cid, patch); closeSheet(); render(); toast(ch ? 'انحفظت بيانات الزبون' : 'ماكو تغيير'); return; }
+  if (s.cid) { const ch = editCustomer(s.cid, patch); closeSheet(); render(); toast(ch ? 'تم حفظ بيانات الزبون' : 'لا يوجد تغيير'); return; }
   const dup = st.customers.find(x => norm(x.name) === norm(name));
-  if (dup && !s.dupOk) { s.dupOk = true; warn(`اكو زبون بنفس الاسم (${esc(dup.name)}). إذا هذا زبون ثاني، اضغط «إضافة» مرة ثانية.`); return; }
+  if (dup && !s.dupOk) { s.dupOk = true; warn(`يوجد زبون بالاسم نفسه (${esc(dup.name)}). إذا كان زبوناً آخر، اضغط «إضافة» مرة أخرى.`); return; }
   let open = parseAmount($('#c-open').value);
   open = open > 0 ? (s.openCur === 'IQD' ? Math.round(open) : r2(open)) : 0;
   const c = addCustomer(patch, open ? {amount: open, cur: s.openCur} : null);
   closeSheet(); ui.q = '';
   go({view: {type: 'customer', id: c.id}});
-  toast(open && u.role !== 'owner' ? `انضاف الزبون، والرصيد السابق ينتظر موافقة ${ownerName()}` : 'انضاف الزبون');
+  toast(open && u.role !== 'owner' ? `تمت إضافة الزبون، والرصيد السابق بانتظار موافقة ${ownerName()}` : 'تمت إضافة الزبون');
 }
 /* a company's invoice or payment */
 function openCoEntryForm(o){
@@ -1894,7 +1895,7 @@ function openCoEntryForm(o){
         <div class="field" id="g-due-wrap"><label for="g-due">موعد التسديد</label><input class="input" id="g-due" type="date" value="${sheetState.due || ''}"></div></div>
       <div class="chips wrap" id="g-due-chips" role="group" aria-label="مواعيد سريعة"></div>
       <div id="g-warn" class="stack" style="gap:8px"></div>
-      ${isStaff && !ed ? `<p class="note">${ic('clock')}<span>تنرسل إلى ${esc(ownerName())} حتى يوافق عليها، وبعدها تنحسب على الشركة.</span></p>` : ''}
+      ${isStaff && !ed ? `<p class="note">${ic('clock')}<span>تُرسل إلى ${esc(ownerName())} للموافقة عليها، ثم تُحتسب على الشركة.</span></p>` : ''}
     </form>
     <div class="sheet-foot"><button class="btn btn-primary grow" data-act="g-save">${isStaff && !ed ? 'إرسال للموافقة' : 'حفظ'}</button></div>`,
     () => { coFormSync(); const a = $('#g-amount'); if (a && !ed) a.focus({preventScroll: true}); });
@@ -1922,7 +1923,7 @@ function coFormSync(){
   else if (amount > 0 && !s.edit) {
     // what the account becomes in this currency (a staff member's entry counts only after approval)
     const after = r2(coBal(s.coid)[s.cur] + T.sign * (s.cur === 'IQD' ? Math.round(amount) : r2(amount)));
-    w = `<p class="note">${ic('info')}<span>بعدها الحساب يصير: ${coRunText(after, s.cur)}${me().role === 'owner' ? '' : `، بعد موافقة ${esc(ownerName())}`}</span></p>`;
+    w = `<p class="note">${ic('info')}<span>سيصبح الحساب: ${coRunText(after, s.cur)}${me().role === 'owner' ? '' : `، بعد موافقة ${esc(ownerName())}`}</span></p>`;
   }
   $('#g-warn').innerHTML = w;
 }
@@ -1933,34 +1934,34 @@ function saveCoEntryForm(){
   let amount = parseAmount($('#g-amount').value);
   const date = $('#g-date').value || todayISO();
   const due = T.inv ? ($('#g-due').value || null) : null;
-  if (!(amount > 0)) { s.err = 'اكتب المبلغ.'; coFormSync(); $('#g-amount').focus(); return; }
+  if (!(amount > 0)) { s.err = 'أدخل المبلغ.'; coFormSync(); $('#g-amount').focus(); return; }
   amount = s.cur === 'IQD' ? Math.round(amount) : r2(amount);
-  if (due && due < date) { s.err = 'موعد التسديد لازم يكون بعد تاريخ القائمة.'; coFormSync(); return; }
+  if (due && due < date) { s.err = 'يجب أن يكون موعد التسديد بعد تاريخ القائمة.'; coFormSync(); return; }
   const note = $('#g-note').value.trim(), invNo = T.inv ? $('#g-inv').value.trim() : '';
   if (s.edit) {
     const fresh = ent(s.edit.id) || s.edit;
     const changed = editEntry(fresh, {amount, cur: s.cur, note, date, due, invNo});
     closeSheet(); render();
-    toast(changed ? 'انحفظ التعديل، وانكتب بالسجل' : 'ماكو تغيير');
+    toast(changed ? 'تم حفظ التعديل وتسجيله في السجل' : 'لا يوجد تغيير');
     return;
   }
   const before = coBal(s.coid)[s.cur];
   const e = addCoEntry({coid: s.coid, type: s.type, amount, cur: s.cur, note, invNo, date, due});
   closeSheet(); render();
-  toast(e.status === 'approved' ? `انحفظت. ${coRunText(r2(before + coEffect(e)), s.cur)}` : `انرسلت إلى ${ownerName()} حتى يوافق عليها`);
+  toast(e.status === 'approved' ? `تم الحفظ. الرصيد: ${coRunText(r2(before + coEffect(e)), s.cur)}` : `أُرسلت إلى ${ownerName()} للموافقة`);
 }
 function openCoForm(id, presetName){
   const c = id ? co(id) : null, u = me();
   sheetState = {kind: 'co', id: id || null, openCur: 'IQD', openDir: 0, dupOk: false};
   const opening = c ? '' : `<div class="field"><label for="k-open">الرصيد السابق (اختياري)</label>
-      <div class="seg dir" role="group" aria-label="منو يطلب منو"><button type="button" data-act="k-dir" data-v="-1" aria-pressed="false">يطلبونا</button><button type="button" data-act="k-dir" data-v="1" aria-pressed="false">نطلبهم</button></div>
+      <div class="seg dir" role="group" aria-label="اتجاه الرصيد"><button type="button" data-act="k-dir" data-v="-1" aria-pressed="false">علينا</button><button type="button" data-act="k-dir" data-v="1" aria-pressed="false">لنا</button></div>
       <div class="amount-row"><input class="input amount" id="k-open" inputmode="decimal" dir="ltr" autocomplete="off" placeholder="0" style="font-size:22px">
       <div class="seg cur" role="group" aria-label="عملة الرصيد السابق"><button type="button" data-act="k-cur" data-v="IQD" aria-pressed="true">د.ع</button><button type="button" data-act="k-cur" data-v="USD" aria-pressed="false">$</button></div></div>
-      <span class="note">${ic('info')}<span>ينسجل كحركة وحدة باسم «رصيد سابق»${u.role === 'owner' ? '' : `، وتنتظر موافقة ${esc(ownerName())}`}.</span></span></div>`;
+      <span class="note">${ic('info')}<span>يُسجَّل كحركة واحدة باسم «رصيد سابق»${u.role === 'owner' ? '' : `، وينتظر موافقة ${esc(ownerName())}`}.</span></span></div>`;
   openSheet(`${sheetHead(c ? 'تعديل الشركة' : 'شركة جديدة', c ? esc(c.name) : '')}
     <form class="sheet-body" id="co-form" novalidate>
       <div class="field"><label for="k-name">اسم الشركة</label><input class="input" id="k-name" autocomplete="off" placeholder="مثلاً: شركة الريم" value="${esc(c ? c.name : (presetName || ''))}"></div>
-      <div class="two"><div class="field"><label for="k-phone">الرقم</label><input class="input" id="k-phone" dir="ltr" inputmode="tel" placeholder="07XX XXX XXXX" value="${esc(c ? c.phone : '')}"></div>
+      <div class="two"><div class="field"><label for="k-phone">رقم الهاتف</label><input class="input" id="k-phone" dir="ltr" inputmode="tel" placeholder="07XX XXX XXXX" value="${esc(c ? c.phone : '')}"></div>
         <div class="field"><label for="k-note">ملاحظة</label><input class="input" id="k-note" autocomplete="off" placeholder="مثلاً: اسم المندوب" value="${esc(c ? c.note : '')}"></div></div>
       ${opening}<div id="k-warn"></div>
     </form>
@@ -1971,41 +1972,41 @@ function saveCoForm(){
   const s = sheetState, u = me();
   const name = $('#k-name').value.trim().replace(/\s+/g, ' ');
   const warn = msg => { $('#k-warn').innerHTML = `<div class="warnbox">${ic('alert')}<span>${msg}</span></div>`; };
-  if (!name) { warn('اكتب اسم الشركة.'); $('#k-name').focus(); return; }
+  if (!name) { warn('أدخل اسم الشركة.'); $('#k-name').focus(); return; }
   const patch = {name, phone: $('#k-phone').value.trim(), note: $('#k-note').value.trim()};
-  if (s.id) { const ch = editCompany(s.id, patch); closeSheet(); render(); toast(ch ? 'انحفظت بيانات الشركة' : 'ماكو تغيير'); return; }
+  if (s.id) { const ch = editCompany(s.id, patch); closeSheet(); render(); toast(ch ? 'تم حفظ بيانات الشركة' : 'لا يوجد تغيير'); return; }
   let open = parseAmount($('#k-open').value);
   open = open > 0 ? (s.openCur === 'IQD' ? Math.round(open) : r2(open)) : 0;
-  if (open && !s.openDir) { warn('اختار الرصيد السابق: يطلبونا لو نطلبهم.'); return; }
+  if (open && !s.openDir) { warn('حدّد اتجاه الرصيد السابق: لنا أو علينا.'); return; }
   const dup = st.companies.find(x => norm(x.name) === norm(name));
-  if (dup && !s.dupOk) { s.dupOk = true; warn(`اكو شركة بنفس الاسم (${esc(dup.name)}). إذا هاي شركة ثانية، اضغط «إضافة» مرة ثانية.`); return; }
+  if (dup && !s.dupOk) { s.dupOk = true; warn(`توجد شركة بالاسم نفسه (${esc(dup.name)}). إذا كانت شركة أخرى، اضغط «إضافة» مرة أخرى.`); return; }
   const c = addCompany(patch, open ? {amount: open, cur: s.openCur, dir: s.openDir} : null);
   closeSheet(); ui.coQ = '';
   go({view: {type: 'company', id: c.id}});
-  toast(open && u.role !== 'owner' ? `انضافت الشركة، والرصيد السابق ينتظر موافقة ${ownerName()}` : 'انضافت الشركة');
+  toast(open && u.role !== 'owner' ? `تمت إضافة الشركة، والرصيد السابق بانتظار موافقة ${ownerName()}` : 'تمت إضافة الشركة');
 }
 function permRows(u){
   return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
 }
 function openUserSheet(id){
   const u = userById(id); if (!u || u.role === 'owner') return;
-  openSheet(`${sheetHead(esc(u.name), u.email ? `<span dir="ltr">${esc(u.email)}</span>` : 'شنو يكدر يسوي')}
+  openSheet(`${sheetHead(esc(u.name), u.email ? `<span dir="ltr">${esc(u.email)}</span>` : 'الصلاحيات')}
     <div class="sheet-body">
-      <div class="field"><span class="lbl">اللقب</span>
-        <div class="seg" role="group" aria-label="اللقب"><button type="button" data-act="u-preset" data-id="${u.id}" data-v="supervisor" aria-pressed="${u.role === 'supervisor'}">مشرف</button><button type="button" data-act="u-preset" data-id="${u.id}" data-v="staff" aria-pressed="${u.role === 'staff'}">موظف</button></div>
-        <span class="note">${ic('info')}<span>اللقب يرجّع الصلاحيات الأساسية، وبعدها تغيّر كل وحدة بروحها.</span></span></div>
+      <div class="field"><span class="lbl">المسمى الوظيفي</span>
+        <div class="seg" role="group" aria-label="المسمى الوظيفي"><button type="button" data-act="u-preset" data-id="${u.id}" data-v="supervisor" aria-pressed="${u.role === 'supervisor'}">مشرف</button><button type="button" data-act="u-preset" data-id="${u.id}" data-v="staff" aria-pressed="${u.role === 'staff'}">موظف</button></div>
+        <span class="note">${ic('info')}<span>اختيار المسمى يعيد الصلاحيات الأساسية، ثم يمكنك تعديل كل صلاحية على حدة.</span></span></div>
       <div class="field"><span class="lbl">الصلاحيات</span><div class="list" id="u-perms">${permRows(u)}</div></div>
-      <div class="list"><div class="urow"><span class="main"><b>الحساب شغال</b><small>إذا وقفته ما يكدر يدخل، وحركاته تبقى باسمه بالسجل.</small></span><button class="switch" role="switch" aria-checked="${!!u.active}" aria-label="الحساب شغال" data-act="toggle-active" data-id="${u.id}"></button></div></div>
-      <p class="note">${ic('shield')}<span>الموافقة والرفض والحذف تبقى إلك بس.</span></p>
-      <button class="btn btn-ghost danger block" data-act="rm-user" data-id="${u.id}">${ic('trash')}شيل الحساب</button>
+      <div class="list"><div class="urow"><span class="main"><b>الحساب مفعّل</b><small>عند إيقافه لن يتمكن من الدخول، وتبقى حركاته باسمه في السجل.</small></span><button class="switch" role="switch" aria-checked="${!!u.active}" aria-label="الحساب مفعّل" data-act="toggle-active" data-id="${u.id}"></button></div></div>
+      <p class="note">${ic('shield')}<span>تبقى الموافقة والرفض والحذف من صلاحياتك وحدك.</span></p>
+      <button class="btn btn-ghost danger block" data-act="rm-user" data-id="${u.id}">${ic('trash')}إزالة الحساب</button>
     </div>`);
 }
 function openAccount(){
   const m = me();
   openSheet(`${sheetHead(esc(m.name), `<span dir="ltr">${esc(m.email || '')}</span>`)}
     <div class="sheet-body"><div class="kv"><span>الصلاحية</span><span class="role ${m.role}">${ROLES[m.role]}</span></div>
-      ${isStandalone() ? '' : `<button class="btn btn-ghost block" data-act="install">${ic('phoneapp')}ثبّت التطبيق على الموبايل</button>`}
-      <button class="btn btn-ghost danger block" data-act="logout">${ic('logout')}تسجيل خروج</button></div>`);
+      ${isStandalone() ? '' : `<button class="btn btn-ghost block" data-act="install">${ic('phoneapp')}تثبيت التطبيق على الهاتف</button>`}
+      <button class="btn btn-ghost danger block" data-act="logout">${ic('logout')}تسجيل الخروج</button></div>`);
 }
 let deferredPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; });
@@ -2013,9 +2014,9 @@ function openInstall(){
   if (deferredPrompt) { const p = deferredPrompt; deferredPrompt = null; closeSheet(); p.prompt(); return; }
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const steps = ios
-    ? '<li>افتح رابط التطبيق من Safari.</li><li>اضغط زر المشاركة (المربع اللي بيه سهم لفوق).</li><li>اختار «إضافة إلى الشاشة الرئيسية»، وبعدها «إضافة».</li>'
-    : '<li>افتح رابط التطبيق من Chrome.</li><li>اضغط النقاط الثلاث فوق.</li><li>اختار «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».</li>';
-  openSheet(`${sheetHead('ثبّت التطبيق', 'حتى تطلع أيقونة محمود ناجي على شاشة الموبايل')}<div class="sheet-body"><ol class="steps">${steps}</ol></div>`);
+    ? '<li>افتح رابط التطبيق من Safari.</li><li>اضغط زر المشاركة (المربع الذي يحتوي على سهم للأعلى).</li><li>اختر «إضافة إلى الشاشة الرئيسية»، ثم «إضافة».</li>'
+    : '<li>افتح رابط التطبيق من Chrome.</li><li>اضغط النقاط الثلاث في الأعلى.</li><li>اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».</li>';
+  openSheet(`${sheetHead('تثبيت التطبيق', 'لتظهر أيقونة محمود ناجي على شاشة الهاتف')}<div class="sheet-body"><ol class="steps">${steps}</ol></div>`);
 }
 
 /* ---------- toast ---------- */
@@ -2027,15 +2028,15 @@ function toast(text, action){
 }
 function toastErr(err){
   const c = (err && err.code) || '';
-  if (c.includes('permission-denied')) toast('ما انحفظت: ما عندك صلاحية لهالشي');
-  else if (c.includes('unavailable') || c.includes('offline') || c.includes('network')) toast('ماكو نت هسه. جرّب لما يرجع النت');
-  else toast('صار خطأ، جرّب مرة ثانية');
+  if (c.includes('permission-denied')) toast('لم يتم الحفظ: لا تملك صلاحية لهذا الإجراء');
+  else if (c.includes('unavailable') || c.includes('offline') || c.includes('network')) toast('لا يوجد اتصال بالإنترنت حالياً. حاول عند عودة الاتصال');
+  else toast('حدث خطأ، حاول مرة أخرى');
   console.warn(err);
 }
 function copyText(text, ok, el){
   const fallback = () => {
-    if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); toast('ظللت النص، انسخه من قائمة الموبايل'); }
-    else toast('ما انتسخ. ظلل النص وانسخه');
+    if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); toast('تم تحديد النص، انسخه من قائمة الهاتف'); }
+    else toast('تعذّر النسخ. حدّد النص وانسخه يدوياً');
   };
   try { const p = navigator.clipboard && navigator.clipboard.writeText(text); if (p && p.then) p.then(() => toast(ok), fallback); else fallback(); }
   catch (err) { fallback(); }
@@ -2044,10 +2045,10 @@ function copyText(text, ok, el){
 /* ---------- subscriptions ---------- */
 let ownSub = null, dataSubs = [], viewSubs = [], viewKeyActive = '';
 function ents(snap){ const out = []; snap.forEach(d => { const e = Object.assign({id: d.id}, d.data()); st.cache.set(e.id, e); out.push(e); }); return out; }
-function onSubErr(err){ console.warn(err); if (err && err.code === 'permission-denied') toast('ما عندك صلاحية تشوف هالبيانات'); }
+function onSubErr(err){ console.warn(err); if (err && err.code === 'permission-denied') toast('لا تملك صلاحية عرض هذه البيانات'); }
 // Leaving a customer's (or company's) page drops its entries too: kept after their listener stops, they went stale,
 // and bal() preferred them to the live balance, so the list and the next approval's WhatsApp message showed an old
-// figure (a payment approved after leaving the page said «الباقي» from before the debts approved meanwhile).
+// figure (a payment approved after leaving the page said «المتبقي» from before the debts approved meanwhile).
 function stopView(){ viewSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); viewKeyActive = ''; st.custEntries = null; st.coEntries = null; }
 function stopData(){ dataSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); stopView(); stopCo(); st.custReady = false; }
 // Companies are read only by the owner and staff with «الشركات», so their listeners follow that permission while
@@ -2175,9 +2176,9 @@ function authWarn(msg, good){ const w = $('#a-warn'); if (w) w.innerHTML = `<div
 async function doAuth(){
   const su = ui.authMode === 'signup';
   const email = $('#a-email').value.trim(), pass = $('#a-pass').value, name = su ? $('#a-name').value.trim() : '';
-  if (su && !name) return authWarn('اكتب اسمك.');
-  if (!email) return authWarn('اكتب الإيميل.');
-  if (pass.length < 6) return authWarn('الباسورد لازم يكون 6 حروف أو أكثر.');
+  if (su && !name) return authWarn('أدخل اسمك.');
+  if (!email) return authWarn('أدخل البريد الإلكتروني.');
+  if (pass.length < 6) return authWarn('يجب أن تتكون كلمة المرور من 6 أحرف أو أكثر.');
   const btn = $('#a-submit'); if (btn) btn.disabled = true;
   try {
     if (su) {
@@ -2195,21 +2196,21 @@ const A = {
   'auth-mode'(d){ ui.authMode = d.v; render(); },
   async 'forgot'(){
     const email = $('#a-email').value.trim();
-    if (!email) return authWarn('اكتب إيميلك فوق، وبعدها اضغط «نسيت الباسورد».');
-    try { await sendPasswordResetEmail(auth, email); authWarn('دزينا رابط على إيميلك تغيّر بيه الباسورد.', true); } catch (err) { authWarn(authMsg(err)); }
+    if (!email) return authWarn('أدخل بريدك الإلكتروني أعلاه، ثم اضغط «نسيت كلمة المرور».');
+    try { await sendPasswordResetEmail(auth, email); authWarn('أرسلنا إلى بريدك الإلكتروني رابطاً لتغيير كلمة المرور.', true); } catch (err) { authWarn(authMsg(err)); }
   },
   async 'verify-done'(){
     const u = auth.currentUser; if (!u) return;
     try {
       await u.reload();
-      if (!auth.currentUser.emailVerified) { const w = $('#v-warn'); if (w) w.innerHTML = `<div class="warnbox">${ic('alert')}<span>بعده الإيميل ما متأكد. افتح الرابط اللي بالإيميل أول.</span></div>`; return; }
+      if (!auth.currentUser.emailVerified) { const w = $('#v-warn'); if (w) w.innerHTML = `<div class="warnbox">${ic('alert')}<span>لم يتم تأكيد البريد الإلكتروني بعد. افتح الرابط المرسل إلى بريدك أولاً.</span></div>`; return; }
       await auth.currentUser.getIdToken(true);
       st.phase = 'boot'; render();
       ensureUserDoc(auth.currentUser);
     } catch (err) { toastErr(err); }
   },
-  'verify-resend'(){ const u = auth.currentUser; if (u) sendEmailVerification(u).then(() => toast('دزينا الرابط مرة ثانية'), err => toast(authMsg(err))); },
-  'logout'(){ closeSheet(); ui.authMode = 'login'; ui.tab = 'customers'; ui.view = null; ui.q = ''; ui.filter = 'all'; signOut(auth); },
+  'verify-resend'(){ const u = auth.currentUser; if (u) sendEmailVerification(u).then(() => toast('أعدنا إرسال الرابط'), err => toast(authMsg(err))); },
+  'logout'(){ closeSheet(); clearTimeout(toastTimer); $('#toast-root').innerHTML = ''; ui.authMode = 'login'; ui.tab = 'customers'; ui.view = null; ui.q = ''; ui.filter = 'all'; signOut(auth); },
   'reload'(){ location.reload(); },
   'account'(){ openAccount(); },
   'install'(){ openInstall(); },
@@ -2225,17 +2226,17 @@ const A = {
   'edit-entry'(d){ const e = ent(d.id); if (!e) return; if (e.coid) openCoEntryForm({coid: e.coid, edit: e}); else openEntryForm({cid: e.cid, edit: e}); },
   'resend'(d){ const e = ent(d.id); if (!e) return; const [t, m] = messageFor(e, bal(e.cid)); openMessage(t, e.cid, m); },
   'del-entry'(d){ openDelete(d.id); },
-  'confirm-del'(d){ const e = ent(d.id); if (!e) return; const del = deleteEntry(e); closeSheet(); render(); toast('انحذفت، وبقت بالسجل', {act: 'undo', id: e.id, label: 'تراجع'}); st.lastDeleted = del; },
+  'confirm-del'(d){ const e = ent(d.id); if (!e) return; const del = deleteEntry(e); closeSheet(); render(); toast('تم الحذف، وبقيت الحركة في السجل', {act: 'undo', id: e.id, label: 'تراجع'}); st.lastDeleted = del; },
   'undo'(){ if (st.lastDeleted) { restoreEntry(st.lastDeleted); st.lastDeleted = null; } $('#toast-root').innerHTML = ''; },
   async 'restore'(d){
     let e = ent(d.id);
     if (!e) { try { const s = await getDoc(ref(d.co ? 'centries' : 'entries', d.id)); if (s.exists()) { e = Object.assign({id: s.id}, s.data()); st.cache.set(e.id, e); } } catch (err) { toastErr(err); return; } }
-    if (e && e.status === 'deleted') { restoreEntry(e); closeSheet(); toast('رجعت الحركة للحساب'); }
-    else toast('هاي الحركة راجعة بالحساب أصلاً');
+    if (e && e.status === 'deleted') { restoreEntry(e); closeSheet(); toast('استُعيدت الحركة إلى الحساب'); }
+    else toast('هذه الحركة موجودة في الحساب أصلاً');
   },
   'approve'(d){
     const e = ent(d.id); if (!e || e.status !== 'pending') return;
-    if (e.coid) { approveEntry(e); closeSheet(); render(); toast('انقبلت وانحسبت على الشركة'); return; }
+    if (e.coid) { approveEntry(e); closeSheet(); render(); toast('تمت الموافقة واحتُسبت على الشركة'); return; }
     const before = bal(e.cid);
     const ne = approveEntry(e);
     render();
@@ -2243,11 +2244,11 @@ const A = {
   },
   'reject'(d){ openReject(d.id); },
   'reason'(d){ const t = $('#r-reason'); t.value = d.v; t.focus(); },
-  'do-reject'(d){ const e = ent(d.id); if (!e) return; rejectEntry(e, $('#r-reason').value.trim()); closeSheet(); render(); toast(`انرفضت، وما انحسبت على ${e.coid ? 'الشركة' : 'الزبون'}`); },
+  'do-reject'(d){ const e = ent(d.id); if (!e) return; rejectEntry(e, $('#r-reason').value.trim()); closeSheet(); render(); toast(`تم الرفض، ولم تُحتسب على ${e.coid ? 'الشركة' : 'الزبون'}`); },
   'remind'(){ openMessage('تذكير بالدين', ui.view.id, msgRemind(ui.view.id)); },
   'send-statement'(){ openMessage('كشف الحساب', ui.view.id, msgStatement(ui.view.id)); },
-  'copy'(d){ copyText(d.text, 'انتسخ'); },
-  'copy-msg'(){ const el = $('#msg'); copyText(el.textContent, 'انتسخت الرسالة', el); },
+  'copy'(d){ copyText(d.text, 'تم النسخ'); },
+  'copy-msg'(){ const el = $('#msg'); copyText(el.textContent, 'تم نسخ الرسالة', el); },
   'close-sheet'(){ closeSheet(); },
   'rtab'(d){ ui.reportTab = d.v; render(); },
   'month'(d){ ui.monthOffset = Number(d.o); render(); },
@@ -2286,7 +2287,7 @@ const A = {
     commit(b);
     st.usersById[u.id] = Object.assign({}, u, {active: true, role: 'staff', perms: Object.assign({}, PRESETS.staff), code});
     openUserSheet(u.id);
-    toast(`انفعّل حساب ${u.name}. اختار صلاحياته`);
+    toast(`تم تفعيل حساب ${u.name}. حدّد صلاحياته`);
   },
   'edit-user'(d){ openUserSheet(d.id); },
   'u-perm'(d, el){
@@ -2294,7 +2295,7 @@ const A = {
     const on = !(u.perms && u.perms[d.k]);
     el.setAttribute('aria-checked', String(on));
     userWrite(u, {[`perms.${d.k}`]: on}, {type: 'user_perm', perm: d.k, on});
-    toast(on ? `صار ${u.name} عنده ${PERM_SHORT[d.k]}` : `انشالت ${PERM_SHORT[d.k]} من ${u.name}`);
+    toast(on ? `مُنح ${u.name} صلاحية «${PERM_SHORT[d.k]}»` : `سُحبت صلاحية «${PERM_SHORT[d.k]}» من ${u.name}`);
   },
   'u-preset'(d){
     const u = userById(d.id); if (!u || u.role === 'owner') return;
@@ -2302,14 +2303,14 @@ const A = {
     document.querySelectorAll('[data-act="u-preset"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v)));
     $('#u-perms').innerHTML = permRows(Object.assign({}, u, {perms}));
     userWrite(u, {role: d.v, perms}, {type: 'user_role', role: d.v});
-    toast(`صار ${u.name} ${ROLES[d.v]} بصلاحياته الأساسية`);
+    toast(`أصبح ${u.name} «${ROLES[d.v]}» بالصلاحيات الأساسية`);
   },
   'toggle-active'(d, el){
     const u = userById(d.id); if (!u || u.role === 'owner') return;
     const active = !u.active;
     el.setAttribute('aria-checked', String(active));
     userWrite(u, {active}, {type: 'user_active', active});
-    toast(active ? `رجع حساب ${u.name} يشتغل` : `انوقف حساب ${u.name}`);
+    toast(active ? `تمت إعادة تفعيل حساب ${u.name}` : `تم إيقاف حساب ${u.name}`);
   },
   'rm-user'(d){ if (me().role === 'owner') openRemoveUser(d.id); },
   'bulk'(){ if (can.message(me()) && can.seeBalances(me())) openBulk(); },
@@ -2320,12 +2321,12 @@ const A = {
     st.usersById[u.id] = Object.assign({}, u, {removed: true, active: false});
     st.users = st.users.map(x => x.id === u.id ? st.usersById[u.id] : x);
     closeSheet(); render();
-    toast(`انشال حساب ${u.name}`);
+    toast(`تمت إزالة حساب ${u.name}`);
   },
   'unrm-user'(d){
     const u = userById(d.id); if (!u || u.role === 'owner' || me().role !== 'owner') return;
     userWrite(u, {removed: false}, {type: 'user_restored'});
-    toast(u.code ? `رجع حساب ${u.name}. شغّله من صفحته حتى يكدر يدخل` : `رجع حساب ${u.name} لقائمة اللي ينتظرون التفعيل`);
+    toast(u.code ? `تمت استعادة حساب ${u.name}. فعّله من صفحته ليتمكن من الدخول` : `أُعيد حساب ${u.name} إلى قائمة الحسابات بانتظار التفعيل`);
   }
 };
 
@@ -2378,7 +2379,7 @@ document.addEventListener('submit', ev => {
     b.set(doc(col('log')), logOf('settings', null));
     commit(b);
     document.querySelectorAll('#app [data-dirty]').forEach(el => { delete el.dataset.dirty; });
-    toast('انحفظت الإعدادات');
+    toast('تم حفظ الإعدادات');
   }
 });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && $('#sheet-root').innerHTML) closeSheet(); });
@@ -2389,5 +2390,5 @@ window.addEventListener('offline', () => { st.online = false; renderNet(); });
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && st.phase === 'app') toast('نزل تحديث جديد للتطبيق', {act: 'reload', label: 'حدّث'}); });
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && st.phase === 'app') toast('يتوفر تحديث جديد للتطبيق', {act: 'reload', label: 'تحديث'}); });
 }
