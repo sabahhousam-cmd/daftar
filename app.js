@@ -38,7 +38,7 @@ const PRESETS = {
 // the database rules take a new staff account only with exactly these five, all off; «totals» and «companies»
 // came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
-const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
+const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'تعديل الأرصدة وحذف الزبائن', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
 const CUR_WORD = {IQD: 'دينار', USD: 'دولار'};
 const MONTHS = ['كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران', 'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول'];
@@ -181,10 +181,13 @@ const can = {
   editCo: u => has(u, 'companies') && has(u, 'customers'),
   reports: u => has(u, 'reports'),
   approve: u => !!u && u.role === 'owner',
-  editEntry: (u, e) => e.status !== 'deleted' && e.status !== 'rejected' && (u.role === 'owner' || (has(u, 'edit') && e.status === 'pending')),
+  // a balance correction is never edited: deleting it puts the balance back, and «تعديل الرصيد» sets it again
+  editEntry: (u, e) => !e.adjust && e.status !== 'deleted' && e.status !== 'rejected' && (u.role === 'owner' || (has(u, 'edit') && e.status === 'pending')),
   deleteEntry: (u, e) => u.role === 'owner' && e.status !== 'deleted',
   editCustomer: u => has(u, 'customers'),
   setLimit: u => !!u && u.role === 'owner',
+  adjust: u => !!u && u.role === 'owner',
+  removeCustomer: u => !!u && u.role === 'owner',
   message: u => has(u, 'messages')
 };
 
@@ -303,10 +306,17 @@ function coTotals(){
 }
 // one entry of either ledger: whose account it is and what it was
 const partyName = e => (e.coid ? (co(e.coid) || {}).name : (cust(e.cid) || {}).name) || '';
-const entryLabel = e => !e.coid ? (e.type === 'debt' ? 'دين' : 'تسديد')
+// A balance correction («تعديل الرصيد», owner only) is stored as a debt when it raises the balance and as a payment when
+// it lowers it, so every sum and the statement still add up. It is marked adjust: it sends no WhatsApp message, stays out
+// of the day and month reports, and is named for what it did.
+const adjLabel = type => `تسوية رصيد (${type === 'debt' ? 'زيادة' : 'تخفيض'})`;
+const entryLabel = e => !e.coid ? (e.adjust ? adjLabel(e.type) : e.type === 'debt' ? 'دين' : 'تسديد')
   : e.opening ? `رصيد سابق: ${coEffect(e) > 0 ? 'لنا' : 'علينا'}` : (CO_TYPES[e.type] || {}).l || '';
 const isInvoice = e => e.coid ? !!(CO_TYPES[e.type] || {}).inv : e.type === 'debt';
 const coRunText = (v, cur) => v > 0 ? `لنا ${amtText(v, cur)}` : v < 0 ? `علينا ${amtText(-v, cur)}` : 'مسدّد';
+const balText = (v, cur) => v < 0 ? `له ${amtText(-v, cur)}` : amtText(v, cur);
+// an entry sent from a phone that was offline when its customer was removed: it can be rejected, not counted
+const custGone = e => !e.coid && !!(cust(e.cid) || {}).archived;
 
 /* ---------- writes ---------- */
 const col = name => collection(fs, name);
@@ -320,7 +330,8 @@ function logOf(type, e, extra){
   return Object.assign({at: Date.now(), by: me().id, type,
     eid: e ? e.id || null : null, cid: e && !isCo ? e.cid : null, cname: e && !isCo ? ((cust(e.cid) || {}).name || '') : '',
     etype: e ? e.type : null, amount: e ? e.amount : null, cur: e ? e.cur : null, no: e ? e.no || null : null},
-    isCo ? Object.assign({coid: e.coid, coname: (co(e.coid) || {}).name || ''}, e.opening ? {opening: true} : null) : null, extra || {});
+    isCo ? Object.assign({coid: e.coid, coname: (co(e.coid) || {}).name || ''}, e.opening ? {opening: true} : null) : null,
+    e && !isCo && e.adjust ? {adjust: true} : null, extra || {});
 }
 // customers' entries and companies' entries share the writes below; KIND says where each one lives
 const KIND = {
@@ -336,13 +347,14 @@ function addEntry(o){
     due: o.type === 'debt' ? (o.due || null) : null, by: m.id, at: now, serverAt: serverTimestamp(),
     status: isOwner ? 'approved' : 'pending', edits: []};
   if (o.opening) e.opening = true;
+  if (o.adjust) e.adjust = true;
   if (isOwner) { e.approvedBy = m.id; e.approvedAt = now; }
   const full = Object.assign({id: r.id}, e);
   const b = writeBatch(fs);
   b.set(r, e);
   b.update(ref('users', m.id), {seq});
   if (isOwner) b.update(ref('customers', o.cid), {[`bal.${o.cur}`]: increment(effect(e)), lastAt: now});
-  b.set(doc(col('log')), logOf('create', full, o.cname ? {cname: o.cname} : null));
+  b.set(doc(col('log')), o.adjust ? logOf('adjust', full, {from: o.from, to: o.to, note: e.note}) : logOf('create', full, o.cname ? {cname: o.cname} : null));
   st.me = Object.assign({}, m, {seq});
   commit(b, isOwner ? () => recompute(o.cid) : null);
   return full;
@@ -528,8 +540,9 @@ function userWrite(u, data, logExtra){
 
 /* ---------- WhatsApp messages ---------- */
 function balMsg(b){ const parts = []; for (const cur of ['IQD', 'USD']) if (b[cur] > 0) parts.push(amtMsg(b[cur], cur)); return parts.join(' و '); }
-// an opening balance carries the book page and the owner's own notes (e.g. «لازم تدقيق»): those stay inside the app
-const custNote = e => e.opening ? 'رصيد سابق' : e.note;
+// an opening balance carries the book page and the owner's own notes (e.g. «لازم تدقيق»), and a balance correction
+// carries the owner's reason: those stay inside the app
+const custNote = e => e.opening ? 'رصيد سابق' : e.adjust ? '' : e.note;
 const shopTail = () => st.shop.phone ? `\nللاستفسار: ${st.shop.phone}` : '';
 function msgDebt(e, b){
   const c = cust(e.cid) || {name: ''};
@@ -558,7 +571,7 @@ function msgRemind(cid){
 function msgStatement(cid, entries){
   const c = cust(cid), all = entries || custList(cid) || [], list = all.filter(e => e.status === 'approved').sort(sortChrono).slice(-10);
   const L = [`كشف حساب ${c.name} لدى ${st.shop.name}`, ''];
-  for (const e of list) { const d = parseISO(e.date), n = custNote(e); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtMsg(e.amount, e.cur)}${n ? ' (' + n + ')' : ''}`); }
+  for (const e of list) { const d = parseISO(e.date), n = custNote(e); L.push(`${d.getDate()}/${d.getMonth() + 1}  ${entryLabel(e)} ${amtMsg(e.amount, e.cur)}${n ? ' (' + n + ')' : ''}`); }
   const bt = balMsg(entries ? summarize(entries).bal : bal(cid));
   L.push('', bt ? `الرصيد المستحق: ${bt}` : 'الحساب مسدد بالكامل.');
   return L.join('\n') + shopTail();
@@ -836,9 +849,10 @@ function ledgerHTML(list, runAfter, showCust){
 function customerScreen(cid){
   const c = cust(cid);
   if (!c) return loadingBox();
+  if (c.archived) return `<div class="empty">${ic('trash')}<span>تم حذف هذا الزبون من الدفتر.</span><button class="btn btn-ghost" data-act="back">رجوع</button></div>`;
   const u = me(), list = custList(cid);
   const b = bal(cid), d = dueInfo(cid), p = list ? pend(cid, list) : pend(cid);
-  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editCustomer(u) ? `<button class="mini" data-act="edit-cust" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}</section>`;
+  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editCustomer(u) ? `<button class="mini" data-act="edit-cust" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}${can.removeCustomer(u) ? `<button class="iconbtn danger" data-act="rm-cust" aria-label="حذف الزبون">${ic('trash')}</button>` : ''}</section>`;
   if (c.phone) h += `<div class="phone-row"><span class="phone" dir="ltr">${esc(c.phone)}</span><a class="mini" href="tel:${esc(toLatin(c.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}اتصال</a><button class="mini" data-act="copy" data-text="${esc(c.phone)}">${ic('copy')}نسخ</button></div>`;
   const lines = [];
   for (const cur of ['IQD', 'USD']) {
@@ -859,7 +873,9 @@ function customerScreen(cid){
     const used = Math.max(0, b[cur]), pct = Math.round(used / lim * 100);
     foot += `<div><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px"><span>سقف الدين ${amtText(lim, cur)}</span><span>نسبة الاستخدام ${pct}%</span></div><div class="meter${pct > 100 ? ' over' : ''}"><i style="width:${Math.min(100, pct)}%"></i></div></div>`;
   }
-  h += `<section class="balance" aria-label="رصيد الزبون"><span class="k">${owes ? 'المبلغ المستحق عليه' : lines.length ? 'له رصيد لدينا' : 'الحساب'}</span>
+  // the correction works from the statement itself, so it waits until the entries have loaded
+  const adj = can.adjust(u) ? `<button class="mini" data-act="adjust" ${list ? '' : 'disabled'}>${ic('edit')}تعديل الرصيد</button>` : '';
+  h += `<section class="balance" aria-label="رصيد الزبون"><div class="bal-top"><span class="k">${owes ? 'المبلغ المستحق عليه' : lines.length ? 'له رصيد لدينا' : 'الحساب'}</span>${adj}</div>
     <div class="bal-lines">${lines.length ? lines.join('') : '<span class="settled">مسدد بالكامل</span>'}</div>${foot ? `<div class="bal-foot">${foot}</div>` : ''}</section>`;
   h += `<div class="actions"><button class="btn btn-debt grow" data-act="new-entry" data-type="debt">${ic('plus')}دين جديد</button><button class="btn btn-pay grow" data-act="new-entry" data-type="pay">${ic('check')}تسديد</button></div>`;
   if (can.message(u)) h += `<div class="actions"><button class="btn btn-ghost grow" data-act="remind" ${owes ? '' : 'disabled'}>${ic('bell')}تذكير</button><button class="btn btn-ghost grow" data-act="send-statement" ${list ? '' : 'disabled'}>${ic('doc')}إرسال كشف الحساب</button></div>`;
@@ -868,7 +884,7 @@ function customerScreen(cid){
   const runAfter = new Map(), run = {IQD: 0, USD: 0};
   for (const e of all.filter(x => x.status === 'approved').sort(sortChrono)) { run[e.cur] = r2(run[e.cur] + effect(e)); runAfter.set(e.id, run[e.cur]); }
   const sorted = all.slice().sort((a, b2) => -sortChrono(a, b2));
-  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')}</span></div>
+  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${sorted.length ? countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة') : ''}</span></div>
     ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>لا توجد حركات بعد. سجّل أول دين أو تسديد من الأزرار أعلاه.</span></div>`}</section>`;
   return h;
 }
@@ -968,7 +984,7 @@ function companyScreen(id){
   const runAfter = new Map(), run = {IQD: 0, USD: 0};
   for (const e of all.filter(x => x.status === 'approved').sort(sortChrono)) { run[e.cur] = r2(run[e.cur] + coEffect(e)); runAfter.set(e.id, run[e.cur]); }
   const sorted = all.slice().sort((a, b2) => -sortChrono(a, b2));
-  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة')}</span></div>
+  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${sorted.length ? countAr(sorted.length, 'حركة واحدة', 'حركتان', 'حركات', 'حركة') : ''}</span></div>
     ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>لا توجد حركات بعد. سجّل أول قائمة أو دفعة من الأزرار أعلاه.</span></div>`}</section>`;
   return h;
 }
@@ -982,7 +998,7 @@ function approvalsScreen(){
   let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هذه الحركات سجّلها الموظفون، مرتبة من الأقدم. وافق عليها من الأعلى إلى الأسفل: تُحتسب الحركة فور موافقتك، وتظهر لك رسالة الواتساب الخاصة بحركة الزبون جاهزة للإرسال.</p>`;
   if (!list.length) return h + `<div class="empty">${ic('check')}<span>لا توجد حركات بانتظار موافقتك.</span></div>`;
   return h + '<div class="stack">' + list.map(e => {
-    const isCo = !!e.coid, inv = isInvoice(e), lc = !isCo && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
+    const isCo = !!e.coid, inv = isInvoice(e), gone = custGone(e), lc = !isCo && !gone && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
     const party = isCo ? `co:${e.coid}` : `c:${e.cid}`, older = seen.has(party); seen.add(party);
     const meta = [`<span>سجّلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
     if (isCo) meta.unshift('<span>حساب شركة</span>');
@@ -995,15 +1011,16 @@ function approvalsScreen(){
         <span class="meta">${meta.join('<i class="dot"></i>')}</span>
         ${lc ? `<span class="warnbox">${ic('alert')}<span>يتجاوز سقف الزبون بمقدار ${amtText(lc.over, lc.cur)}. يصبح الرصيد ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
         ${older ? `<span class="warnbox soft">${ic('info')}<span>توجد أعلاها حركة أقدم ${isCo ? 'للشركة نفسها' : 'للزبون نفسه'} بانتظار الموافقة. وافق عليها أولاً ليظهر الرصيد صحيحاً.</span></span>` : ''}
+        ${gone ? `<span class="warnbox">${ic('alert')}<span>هذا الزبون محذوف من الدفتر. استعده من سجل الحركات قبل الموافقة، أو ارفض الحركة.</span></span>` : ''}
       </button>
-      <div class="appr-actions"><button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button><button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
+      <div class="appr-actions">${gone ? '' : `<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`}<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
   }).join('') + '</div>';
 }
 function requestsScreen(){
   const waiting = st.myPending.concat(st.myCoPending), rejected = st.myRejected.concat(st.myCoRejected);
   const list = waiting.concat(rejected);
   let h = `<div class="titlebar"><h1 class="h1">طلباتي</h1></div><p class="lead">تُرسل كل حركة تسجّلها إلى ${esc(ownerName())}. هنا ترى ما ينتظر الموافقة، وما رُفض وسبب رفضه. الحركات المقبولة تجدها في كشف الحساب.</p>`;
-  h += `<div class="meta-line" style="margin-top:0"><span>${countAr(waiting.length, 'حركة واحدة تنتظر', 'حركتان تنتظران', 'حركات تنتظر', 'حركة تنتظر')}</span>${rejected.length ? `<span class="late-txt">${countAr(rejected.length, 'حركة واحدة مرفوضة', 'حركتان مرفوضتان', 'حركات مرفوضة', 'حركة مرفوضة')}</span>` : ''}</div>`;
+  if (list.length) h += `<div class="meta-line" style="margin-top:0"><span>${waiting.length ? countAr(waiting.length, 'حركة واحدة تنتظر', 'حركتان تنتظران', 'حركات تنتظر', 'حركة تنتظر') : 'لا توجد حركات تنتظر'}</span>${rejected.length ? `<span class="late-txt">${countAr(rejected.length, 'حركة واحدة مرفوضة', 'حركتان مرفوضتان', 'حركات مرفوضة', 'حركة مرفوضة')}</span>` : ''}</div>`;
   if (!list.length) return h + `<div class="empty">${ic('inbox')}<span>لا توجد حركات بانتظار الموافقة. افتح صفحة أي زبون لتسجيل دين أو تسديد.</span></div>`;
   return h + ledgerHTML(list.slice().sort((a, b) => -sortChrono(a, b)), null, true);
 }
@@ -1020,8 +1037,8 @@ function reportsScreen(){
 }
 function todayReport(){
   if (!st.today) return loadingBox();
-  // opening balances carried over from the paper book are not today's business
-  const t = todayISO(), todays = st.today.filter(e => isoOf(new Date(e.at)) === t && (e.status === 'approved' || e.status === 'pending') && !e.opening);
+  // opening balances carried over from the paper book, and the owner's balance corrections, are not today's business
+  const t = todayISO(), todays = st.today.filter(e => isoOf(new Date(e.at)) === t && (e.status === 'approved' || e.status === 'pending') && !e.opening && !e.adjust);
   const cash = {IQD: 0, USD: 0}, cashWait = {IQD: 0, USD: 0};
   for (const e of todays) if (e.type === 'pay') { cash[e.cur] = r2(cash[e.cur] + e.amount); if (e.status === 'pending') cashWait[e.cur] = r2(cashWait[e.cur] + e.amount); }
   const waitTxt = (cashWait.IQD || cashWait.USD) ? `منها تنتظر الموافقة: ${[cashWait.IQD ? amtText(cashWait.IQD, 'IQD') : '', cashWait.USD ? amtText(cashWait.USD, 'USD') : ''].filter(Boolean).join(' و ')}` : 'جميعها مقبولة';
@@ -1049,7 +1066,7 @@ function monthReport(){
   const m0 = monthRange(0), m1 = monthRange(1), R = monthRange(ui.monthOffset);
   let h = `<div class="chips" role="group" aria-label="الشهر"><button class="chip" data-act="month" data-o="0" aria-pressed="${ui.monthOffset === 0}">${MONTHS[m0.m]}</button><button class="chip" data-act="month" data-o="1" aria-pressed="${ui.monthOffset === 1}">${MONTHS[m1.m]}</button></div>`;
   if (!st.month || st.monthKey !== R.start) return h + loadingBox();
-  const debt = {IQD: 0, USD: 0}, pay = {IQD: 0, USD: 0}, moves = st.month.filter(e => !e.opening);
+  const debt = {IQD: 0, USD: 0}, pay = {IQD: 0, USD: 0}, moves = st.month.filter(e => !e.opening && !e.adjust);
   for (const e of moves) { const s = e.type === 'debt' ? debt : pay; s[e.cur] = r2(s[e.cur] + e.amount); }
   const newCust = st.customers.filter(c => { const d = new Date(c.createdAt || 0); return !c.imported && d.getFullYear() === R.y && d.getMonth() === R.m; }).length;
   h += `<div class="stat-grid">
@@ -1058,7 +1075,7 @@ function monthReport(){
     <div class="stat"><span class="k">عدد الحركات</span><span class="v">${moves.length}</span></div>
     <div class="stat"><span class="k">زبائن جدد</span><span class="v">${newCust}</span></div></div>`;
   const top = custRows().filter(r => r.b.IQD > 0 || r.b.USD > 0).sort((a, b) => (b.b.IQD - a.b.IQD) || (b.b.USD - a.b.USD)).slice(0, 5);
-  h += `<section class="stack"><div class="sec-h"><h2>أعلى الأرصدة المستحقة حالياً</h2><span>${countAr(top.length, 'زبون واحد', 'زبونان', 'زبائن', 'زبوناً')}</span></div>`;
+  h += `<section class="stack"><div class="sec-h"><h2>أعلى الأرصدة المستحقة حالياً</h2><span>${top.length ? countAr(top.length, 'زبون واحد', 'زبونان', 'زبائن', 'زبوناً') : ''}</span></div>`;
   h += top.length ? `<div class="list">${top.map(r => custRow(r, true)).join('')}</div>` : '<div class="empty"><span>لا توجد ديون مفتوحة.</span></div>';
   return h + '</section>';
 }
@@ -1091,13 +1108,13 @@ async function exportExcel(btn, fileName){
     }
     const r2rows = [['رقم الوصل', 'التاريخ', 'الزبون', 'النوع', 'المبلغ', 'العملة', 'المادة / ملاحظة', 'موعد التسديد', 'الحالة', 'سجلها', 'وقت التسجيل', 'وافق عليها', 'وقت الموافقة', 'سبب الرفض']];
     for (const e of all.slice().sort(sortChrono)) {
-      r2rows.push([e.no || '', e.date, (cust(e.cid) || {}).name || '', e.type === 'debt' ? 'دين' : 'تسديد', e.amount, CUR_WORD[e.cur], e.note || '', e.due || '', STATUS[e.status] || e.status,
+      r2rows.push([e.no || '', e.date, (cust(e.cid) || {}).name || '', entryLabel(e), e.amount, CUR_WORD[e.cur], e.note || '', e.due || '', STATUS[e.status] || e.status,
         uname(e.by), stampISO(e.at), e.approvedBy ? uname(e.approvedBy) : '', stampISO(e.approvedAt), e.reason || '']);
     }
     const wb = X.utils.book_new();
     wb.Workbook = {Views: [{RTL: true}]};
     const s1 = X.utils.aoa_to_sheet(r1); s1['!cols'] = [24, 16, 18, 16, 16, 12, 14, 16].map(w => ({wch: w}));
-    const s2 = X.utils.aoa_to_sheet(r2rows); s2['!cols'] = [10, 12, 22, 8, 14, 8, 26, 13, 16, 10, 18, 10, 18, 28].map(w => ({wch: w}));
+    const s2 = X.utils.aoa_to_sheet(r2rows); s2['!cols'] = [10, 12, 22, 17, 14, 8, 26, 13, 16, 10, 18, 10, 18, 28].map(w => ({wch: w}));
     X.utils.book_append_sheet(wb, s1, 'الأرصدة');
     X.utils.book_append_sheet(wb, s2, 'الحركات');
     // the companies come after the customers' sheets, under their own headers, so importing this file back still
@@ -1546,7 +1563,8 @@ function logText(ev){
     }
     return '';
   }
-  const what = ev.etype ? `${ev.etype === 'debt' ? 'دين' : 'تسديد'} ${amtText(ev.amount, ev.cur)}` : '';
+  const what = ev.etype ? `${ev.adjust ? adjLabel(ev.etype) : ev.etype === 'debt' ? 'دين' : 'تسديد'} ${amtText(ev.amount, ev.cur)}` : '';
+  const withN = n => n ? ` مع ${countAr(n, 'حركة واحدة', 'حركتين', 'حركات', 'حركة')}` : '';
   switch (ev.type) {
     case 'create': return ev.etype === 'pay' ? `${who} سجّل ${what} من ${cn}` : `${who} سجّل ${what} على ${cn}`;
     case 'approve': return `${who} وافق على ${what} في حساب ${cn}`;
@@ -1556,6 +1574,10 @@ function logText(ev){
     case 'restore': return `${who} استعاد ${what} إلى حساب ${cn}`;
     case 'customer_add': return `${who} أضاف الزبون ${cn}`;
     case 'customer_edit': return `${who} عدّل بيانات ${cn}`;
+    case 'adjust': return `${who} عدّل رصيد ${cn} من ${balText(ev.from || 0, ev.cur)} إلى ${balText(ev.to || 0, ev.cur)}${ev.note ? `: ${esc(ev.note)}` : ''}`;
+    case 'customer_remove': { const was = ['IQD', 'USD'].filter(c => ev.bal && ev.bal[c]).map(c => balText(ev.bal[c], c));
+      return `${who} حذف الزبون ${cn}${withN(ev.entries)}${was.length ? `، وكان رصيده ${was.join(' و ')}` : ''}`; }
+    case 'customer_restore': return `${who} استعاد الزبون ${cn}${withN(ev.entries)}`;
     case 'user_role': return `${who} غيّر المسمى الوظيفي لحساب ${esc(ev.name)} إلى ${ROLES[ev.role] || ''}`;
     case 'user_perm': return `${who} ${ev.on ? 'منح' : 'سحب من'} ${esc(ev.name)} صلاحية «${PERM_SHORT[ev.perm] || ''}»`;
     case 'user_active': return `${who} ${ev.active ? 'فعّل' : 'أوقف'} حساب ${esc(ev.name)}`;
@@ -1568,10 +1590,10 @@ function logText(ev){
   }
   return '';
 }
-const EV_IC = {co_add: 'building', co_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
+const EV_IC = {adjust: 'edit', customer_remove: 'trash', customer_restore: 'undo', co_add: 'building', co_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
-  let h = '<p class="lead">يُحفظ هنا كل ما يجري في الدفتر، ولا يمكن لأحد مسحه. ويمكنك استعادة الحركة المحذوفة.</p>';
+  let h = '<p class="lead">يُحفظ هنا كل ما يجري في الدفتر، ولا يمكن لأحد مسحه. ومن هنا تستعيد ما حُذف من حركات وزبائن.</p>';
   if (!st.logList.length) return h + `<div class="empty">${ic('list')}<span>لا توجد حركات بعد.</span></div>`;
   let lastDay = '', open = false;
   for (const ev of st.logList) {
@@ -1579,7 +1601,11 @@ function logScreen(){
     if (day !== lastDay) { if (open) h += '</div>'; const rd = relDay(day); h += `<div class="day-h">${rd === 'اليوم' || rd === 'أمس' ? rd + '، ' + fmtDate(day) : fmtDate(day)}</div><div class="list">`; lastDay = day; open = true; }
     const e = ev.eid ? ent(ev.eid) : null;
     const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}" data-co="${ev.coid ? 1 : ''}">${ic('undo')}استعادة</button>` : '';
-    h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && (!e || e.status === 'deleted') ? restore : ''}</div>`;
+    // a removed customer comes back from the line that removed them, while that removal still stands
+    const gone = ev.type === 'customer_remove' && ev.cid ? cust(ev.cid) : null;
+    const custBack = gone && gone.archived && gone.archivedAt === ev.archivedAt ? `<button class="mini" data-act="restore-cust" data-id="${ev.cid}">${ic('undo')}استعادة</button>` : '';
+    const away = ev.cid && cust(ev.cid) && cust(ev.cid).archived;
+    h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && !away && (!e || e.status === 'deleted') ? restore : custBack}</div>`;
   }
   return h + (open ? '</div>' : '');
 }
@@ -1796,8 +1822,8 @@ function openEntryDetail(id){
     ['المبلغ', `<span class="vals">${amt(e.amount, e.cur, inv ? 'owe' : 'cred')}<span class="words">${amountWords(e.amount, e.cur)}</span></span>`, true]
   ];
   if (isCo && inv && !e.opening) rows.push(['رقم القائمة', e.invNo ? `<span dir="auto">${esc(e.invNo)}</span>` : '—']);
-  rows.push([inv ? 'المادة' : 'ملاحظة', e.note ? esc(e.note) : '—'], ['التاريخ', fmtDate(e.date, true)]);
-  if (inv) rows.push(['موعد التسديد', e.due ? fmtDate(e.due, true) : 'بدون موعد']);
+  rows.push([e.adjust ? 'السبب' : inv ? 'المادة' : 'ملاحظة', e.note ? esc(e.note) : '—'], ['التاريخ', fmtDate(e.date, true)]);
+  if (inv && !e.adjust) rows.push(['موعد التسديد', e.due ? fmtDate(e.due, true) : 'بدون موعد']);
   rows.push(['رقم الوصل', `<span dir="ltr">${noTag(e.no)}</span>`], ['الحالة', `<span class="pill ${e.status === 'approved' ? 'ok' : e.status === 'pending' ? 'wait' : e.status === 'rejected' ? 'late' : 'off'}">${STATUS[e.status] || ''}</span>`]);
   const trail = [{t: e.at, i: 'plus', c: 'create', x: `سجّلها ${esc(uname(e.by))}${e.approvedBy && e.approvedBy === e.by ? '، واحتُسبت مباشرة' : ''}`}];
   for (const edt of (e.edits || [])) trail.push({t: edt.at, i: 'edit', c: 'edit', x: `عدّلها ${esc(uname(edt.by))}: ${esc(changesText(edt.changes, e.cur))}`});
@@ -1807,9 +1833,9 @@ function openEntryDetail(id){
   if (e.restoredAt) trail.push({t: e.restoredAt, i: 'undo', c: 'restore', x: `استعادها ${esc(uname(e.restoredBy))}`});
   trail.sort((a, b) => a.t - b.t);
   const btns = [];
-  if (can.approve(u) && e.status === 'pending') btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`, `<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`);
+  if (can.approve(u) && e.status === 'pending') { if (!custGone(e)) btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`); btns.push(`<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`); }
   if (can.editEntry(u, e)) btns.push(`<button class="btn btn-ghost grow" data-act="edit-entry" data-id="${e.id}">${ic('edit')}تعديل</button>`);
-  if (!isCo && can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
+  if (!isCo && !e.adjust && can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
   if (can.deleteEntry(u, e)) btns.push(`<button class="btn btn-ghost danger" data-act="del-entry" data-id="${e.id}" aria-label="حذف">${ic('trash')}</button>`);
   if (e.status === 'deleted' && u.role === 'owner') btns.push(`<button class="btn btn-ghost grow" data-act="restore" data-id="${e.id}" data-co="${isCo ? 1 : ''}">${ic('undo')}استعادة</button>`);
   openSheet(`${sheetHead(`${label} <span dir="ltr">${noTag(e.no)}</span>`, esc(partyName(e)))}
@@ -1834,6 +1860,145 @@ function openDelete(id){
   openSheet(`${sheetHead(`حذف الوصل <span dir="ltr">${noTag(e.no)}</span>؟`, name)}
     <div class="sheet-body"><p class="lead" style="color:var(--ink)">${entryLabel(e)} ${amtText(e.amount, e.cur)}${e.note ? ` (${esc(e.note)})` : ''} سيُزال من حساب ${name} ولن يُحتسب، ويبقى في سجل الحركات ويمكنك استعادته.</p></div>
     <div class="sheet-foot"><button class="btn btn-danger grow" data-act="confirm-del" data-id="${id}">${ic('trash')}حذف</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
+}
+/* «تعديل الرصيد»: the owner types the right balance; the difference is recorded as a «تسوية رصيد», so the statement
+   still adds up and the log says who changed it, from what and to what */
+const adjTarget = (v, cur) => !(v >= 0) ? null : cur === 'IQD' ? Math.round(v) : r2(v);
+function openAdjust(cid){
+  const c = cust(cid), b = bal(cid);
+  sheetState = {kind: 'adjust', cid, cur: !b.IQD && b.USD ? 'USD' : 'IQD', err: ''};
+  openSheet(`${sheetHead('تعديل الرصيد', esc(c.name))}
+    <form class="sheet-body" id="adjust-form" novalidate>
+      <div id="a-now"></div>
+      <div class="field"><label for="a-amount">الرصيد الصحيح</label>
+        <div class="amount-row"><input class="input amount" id="a-amount" inputmode="decimal" dir="ltr" autocomplete="off" placeholder="0">
+        <div class="seg cur" role="group" aria-label="العملة"><button type="button" data-act="a-cur" data-v="IQD">د.ع</button><button type="button" data-act="a-cur" data-v="USD">$</button></div></div>
+        <div class="hint" id="a-hint" aria-live="polite"></div></div>
+      <div class="field"><label for="a-note">سبب التعديل (اختياري)</label><input class="input" id="a-note" autocomplete="off" placeholder="مثلاً: تصحيح خطأ في الإدخال"></div>
+      <div id="a-warn" class="stack" style="gap:8px" aria-live="polite"></div>
+      <p class="note">${ic('info')}<span>لن تُرسل رسالة إلى الزبون، ولا تدخل التسوية في تقارير اليوم والشهر.</span></p>
+    </form>
+    <div class="sheet-foot"><button class="btn btn-primary grow" data-act="a-save">حفظ الرصيد</button></div>`,
+    () => { adjustFill(); const a = $('#a-amount'); a.focus({preventScroll: true}); a.select(); });
+}
+// the field starts at the current balance of the chosen currency, ready to be typed over
+function adjustFill(){
+  const s = sheetState; if (!s || s.kind !== 'adjust') return;
+  const v = bal(s.cid)[s.cur];
+  $('#a-amount').value = v > 0 ? fmtNum(v, s.cur) : '';
+  adjustSync();
+}
+function adjustSync(){
+  const s = sheetState; if (!s || s.kind !== 'adjust') return;
+  document.querySelectorAll('[data-act="a-cur"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === s.cur)));
+  const now = bal(s.cid)[s.cur], v = parseAmount($('#a-amount').value), target = adjTarget(v, s.cur);
+  $('#a-hint').textContent = v > 0 ? amountWords(v, s.cur) : '';
+  $('#a-now').innerHTML = `<div class="kv"><span>الرصيد الحالي</span><b>${now ? balText(now, s.cur) : 'مسدد'}</b></div>`;
+  const out = [];
+  if (s.err) out.push(`<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>`);
+  const d = target === null ? 0 : r2(target - now);
+  if (d) out.push(`<p class="note">${ic('doc')}<span>سيُسجَّل في كشف الحساب: ${adjLabel(d > 0 ? 'debt' : 'pay')} بمبلغ ${amtText(Math.abs(d), s.cur)}.</span></p>`);
+  if (pend(s.cid, custList(s.cid)).n) out.push(`<div class="warnbox soft">${ic('clock')}<span>لهذا الزبون حركات بانتظار موافقتك، وهي غير داخلة في الرصيد الحالي.</span></div>`);
+  $('#a-warn').innerHTML = out.join('');
+}
+function saveAdjust(){
+  const s = sheetState; if (!s || s.kind !== 'adjust') return;
+  const target = adjTarget(parseAmount($('#a-amount').value), s.cur);
+  const fail = msg => { s.err = msg; adjustSync(); $('#a-amount').focus(); };
+  if (target === null) { fail('أدخل الرصيد الصحيح.'); return; }
+  const now = bal(s.cid)[s.cur], d = r2(target - now);
+  if (!d) { fail('الرصيد المُدخل مطابق للرصيد الحالي.'); return; }
+  addEntry({cid: s.cid, type: d > 0 ? 'debt' : 'pay', amount: Math.abs(d), cur: s.cur, note: $('#a-note').value.trim(), date: todayISO(), due: null, adjust: true, from: now, to: target});
+  closeSheet(); render();
+  toast(`تم تعديل الرصيد إلى ${balText(target, s.cur)}`);
+}
+
+/* «حذف الزبون» (owner): the customer and every entry of theirs leave the lists, totals and reports. Nothing is erased
+   (the rules forbid it): one timestamp marks the customer and those entries, so the log line that removed them brings back
+   exactly them, and not entries deleted one by one before. */
+function openRemoveCustomer(cid){
+  const c = cust(cid); if (!c || c.archived) return;
+  sheetState = {kind: 'rm-cust', cid, busy: false, err: ''};
+  openSheet(`${sheetHead(`حذف الزبون ${esc(c.name)}؟`, esc(c.note || ''))}<div class="sheet-body" id="rc-body"></div><div class="sheet-foot" id="rc-foot"></div>`, renderRemoveCustomer);
+}
+function renderRemoveCustomer(){
+  const s = sheetState; if (!s || s.kind !== 'rm-cust') return;
+  const body = $('#rc-body'), foot = $('#rc-foot'); if (!body || !foot) return;
+  const list = custList(s.cid), b = bal(s.cid), waiting = pend(s.cid, list).n;
+  const lines = ['IQD', 'USD'].filter(cur => b[cur]).map(cur => `<span>${balText(b[cur], cur)}</span>`);
+  body.innerHTML = `<div>
+      <div class="kv"><span>الرصيد</span><span class="vals">${lines.length ? lines.join('') : '<span>مسدد بالكامل</span>'}</span></div>
+      ${list ? `<div class="kv"><span>الحركات</span><b>${list.filter(e => e.status !== 'deleted').length}</b></div>` : ''}</div>
+    ${waiting ? `<div class="warnbox">${ic('alert')}<span>لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الزبون.</span></div>`
+      : `<p class="lead" style="color:var(--ink)">سيُحذف الزبون مع جميع حركاته من القوائم والمجاميع والتقارير، ولن تُرسل إليه أي رسالة.</p>
+    <p class="note">${ic('info')}<span>يبقى الحذف مسجّلاً في سجل الحركات، ويمكنك استعادة الزبون مع حركاته من هناك.</span></p>`}
+    ${s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : ''}`;
+  foot.innerHTML = `<button class="btn btn-danger grow" id="rc-go" data-act="rm-cust-go" ${waiting || s.busy ? 'disabled' : ''}>${ic('trash')}${s.busy ? 'جاري الحذف…' : 'حذف الزبون'}</button><button class="btn btn-ghost grow" data-act="close-sheet" ${s.busy ? 'disabled' : ''}>إلغاء</button>`;
+}
+async function runRemoveCustomer(){
+  const s = sheetState; if (!s || s.kind !== 'rm-cust' || s.busy) return;
+  const c = cust(s.cid); if (!c) return;
+  if (!navigator.onLine) { s.err = 'يتطلب حذف الزبون اتصالاً بالإنترنت.'; renderRemoveCustomer(); return; }
+  Object.assign(s, {busy: true, err: ''}); renderRemoveCustomer();
+  const m = me();
+  st.inflight++;
+  try {
+    const snap = await getDocsFromServer(query(col('entries'), where('cid', '==', s.cid)));
+    const list = []; snap.forEach(d => list.push(Object.assign({id: d.id}, d.data())));
+    if (list.some(e => e.status === 'pending')) {
+      s.busy = false; s.err = 'لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الزبون.';
+      if (sheetState === s) renderRemoveCustomer();
+      return;
+    }
+    const live = list.filter(e => e.status !== 'deleted'), fresh = cust(s.cid) || c;
+    // a retry after a broken connection finishes the same removal, under the same mark
+    const at = fresh.archived ? fresh.archivedAt : Date.now();
+    if (!fresh.archived) {
+      const b = writeBatch(fs);
+      b.update(ref('customers', s.cid), {archived: true, archivedAt: at, archivedBy: m.id, bal: {IQD: 0, USD: 0}, due: null});
+      b.set(doc(col('log')), Object.assign(logOf('customer_remove', null), {cid: s.cid, cname: c.name, archivedAt: at, entries: live.length, bal: summarize(list).bal}));
+      await b.commit();
+    }
+    // five documents per request keeps the security rules' document reads under Firestore's per-request limit
+    for (let i = 0; i < live.length; i += 5) {
+      const b = writeBatch(fs);
+      for (const e of live.slice(i, i + 5)) b.update(ref('entries', e.id), {status: 'deleted', prevStatus: e.status, deletedBy: m.id, deletedAt: at});
+      await b.commit();
+    }
+    closeSheet();
+    go({tab: 'customers', view: null});
+    toast(`تم حذف الزبون ${c.name}`, {act: 'restore-cust', id: s.cid, label: 'تراجع'});
+  } catch (err) {
+    console.warn(err);
+    s.busy = false;
+    s.err = 'توقف الحذف قبل اكتماله. اضغط «حذف الزبون» مرة أخرى لإكماله.';
+    if (sheetState === s) renderRemoveCustomer();
+    toastErr(err);
+  } finally { st.inflight--; }
+}
+async function restoreCustomer(cid){
+  const c = cust(cid);
+  if (!c || !c.archived) { toast('هذا الزبون موجود في القائمة أصلاً'); return; }
+  if (!navigator.onLine) { toast('تتطلب استعادة الزبون اتصالاً بالإنترنت'); return; }
+  $('#toast-root').innerHTML = '';
+  const m = me(), now = Date.now();
+  st.inflight++;
+  try {
+    const snap = await getDocsFromServer(query(col('entries'), where('cid', '==', cid)));
+    const list = []; snap.forEach(d => list.push(Object.assign({id: d.id}, d.data())));
+    const back = list.filter(e => e.status === 'deleted' && e.deletedAt === c.archivedAt && !e.resetAt);
+    for (let i = 0; i < back.length; i += 5) {
+      const b = writeBatch(fs);
+      for (const e of back.slice(i, i + 5)) b.update(ref('entries', e.id), {status: e.prevStatus || 'approved', restoredBy: m.id, restoredAt: now});
+      await b.commit();
+    }
+    for (const e of back) e.status = e.prevStatus || 'approved';
+    const sum = summarize(list), b = writeBatch(fs);
+    b.update(ref('customers', cid), {archived: false, restoredAt: now, restoredBy: m.id, bal: sum.bal, due: sum.due});
+    b.set(doc(col('log')), Object.assign(logOf('customer_restore', null), {cid, cname: c.name, entries: back.length}));
+    await b.commit();
+    toast(back.length ? `استُعيد الزبون ${c.name} مع حركاته` : `استُعيد الزبون ${c.name}`);
+  } catch (err) { toastErr(err); } finally { st.inflight--; }
 }
 function openCustomerForm(cid, presetName){
   const c = cid ? cust(cid) : null, u = me();
@@ -2221,6 +2386,12 @@ const A = {
   'open-cust'(d){ go({view: {type: 'customer', id: d.id}}); },
   'add-cust'(d){ openCustomerForm(null, d.name); },
   'edit-cust'(d){ openCustomerForm(d.id); },
+  'adjust'(){ if (can.adjust(me()) && ui.view && ui.view.type === 'customer' && custList(ui.view.id)) openAdjust(ui.view.id); },
+  'a-cur'(d){ const s = sheetState; if (!s || s.kind !== 'adjust') return; s.cur = d.v; s.err = ''; adjustFill(); },
+  'a-save'(){ saveAdjust(); },
+  'rm-cust'(){ if (can.removeCustomer(me()) && ui.view && ui.view.type === 'customer') openRemoveCustomer(ui.view.id); },
+  'rm-cust-go'(){ runRemoveCustomer(); },
+  'restore-cust'(d){ if (can.removeCustomer(me())) restoreCustomer(d.id); },
   'new-entry'(d){ openEntryForm({cid: ui.view.id, type: d.type}); },
   'open-entry'(d){ openEntryDetail(d.id); },
   'edit-entry'(d){ const e = ent(d.id); if (!e) return; if (e.coid) openCoEntryForm({coid: e.coid, edit: e}); else openEntryForm({cid: e.cid, edit: e}); },
@@ -2231,11 +2402,12 @@ const A = {
   async 'restore'(d){
     let e = ent(d.id);
     if (!e) { try { const s = await getDoc(ref(d.co ? 'centries' : 'entries', d.id)); if (s.exists()) { e = Object.assign({id: s.id}, s.data()); st.cache.set(e.id, e); } } catch (err) { toastErr(err); return; } }
+    if (e && !e.coid && (cust(e.cid) || {}).archived) { toast('هذه الحركة لزبون محذوف، وتعود معه عند استعادته من سجل الحركات'); return; }
     if (e && e.status === 'deleted') { restoreEntry(e); closeSheet(); toast('استُعيدت الحركة إلى الحساب'); }
     else toast('هذه الحركة موجودة في الحساب أصلاً');
   },
   'approve'(d){
-    const e = ent(d.id); if (!e || e.status !== 'pending') return;
+    const e = ent(d.id); if (!e || e.status !== 'pending' || custGone(e)) return;
     if (e.coid) { approveEntry(e); closeSheet(); render(); toast('تمت الموافقة واحتُسبت على الشركة'); return; }
     const before = bal(e.cid);
     const ne = approveEntry(e);
@@ -2348,6 +2520,7 @@ document.addEventListener('input', ev => {
   if (t.id === 'g-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; coFormSync(); return; }
   if (t.id === 'k-open') { formatAmountInput(t, sheetState.openCur); return; }
   if (t.id === 'f-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; formSync(); return; }
+  if (t.id === 'a-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; adjustSync(); return; }
   if (t.dataset && t.dataset.money) { formatAmountInput(t, t.dataset.money); return; }
   if (t.id === 'c-open') { formatAmountInput(t, sheetState.openCur); return; }
   if (t.id === 'rs-word') { if (sheetState) { sheetState.word = t.value; sheetState.err = ''; } return; }
@@ -2369,6 +2542,7 @@ document.addEventListener('submit', ev => {
   if (id === 'auth-form') doAuth();
   else if (id === 'entry-form') saveEntryForm();
   else if (id === 'cust-form') saveCustomerForm();
+  else if (id === 'adjust-form') saveAdjust();
   else if (id === 'co-entry-form') saveCoEntryForm();
   else if (id === 'co-form') saveCoForm();
   else if (id === 'reject-form') A['do-reject']({id: sheetState.id});

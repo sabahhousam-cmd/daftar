@@ -152,8 +152,10 @@ button{-webkit-tap-highlight-color:transparent}
 .phone{font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500;user-select:all}
 .mini{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);background:var(--sheet);border-radius:999px;padding:4px 11px;font-size:12.5px;cursor:pointer;color:var(--ink);text-decoration:none}
 .mini .ic{width:15px;height:15px}
+.mini:disabled{opacity:.45;cursor:not-allowed}
 .balance{background:var(--sheet);border:1px solid var(--rule);border-radius:var(--r-lg);padding:16px;display:flex;flex-direction:column;gap:10px}
 .balance .k{font-size:13px;color:var(--muted)}
+.bal-top{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:28px}
 .bal-lines{display:flex;flex-direction:column;gap:2px;font-family:var(--font-display);font-size:30px;line-height:1.2}
 .bal-lines .amt{font-weight:600}
 .bal-lines .amt .cur{font-size:15px}
@@ -266,8 +268,8 @@ button{-webkit-tap-highlight-color:transparent}
 .ev-ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--paper);border:1px solid var(--rule);color:var(--muted)}
 .ev-ic .ic{width:15px;height:15px}
 .ev-ic.approve{background:var(--pay-soft);color:var(--pay);border-color:transparent}
-.ev-ic.reject,.ev-ic.delete,.ev-ic.reset,.ev-ic.user_removed{background:var(--debt-soft);color:var(--debt);border-color:transparent}
-.ev-ic.create{background:var(--wait-soft);color:var(--wait);border-color:transparent}
+.ev-ic.reject,.ev-ic.delete,.ev-ic.reset,.ev-ic.user_removed,.ev-ic.customer_remove{background:var(--debt-soft);color:var(--debt);border-color:transparent}
+.ev-ic.create,.ev-ic.adjust{background:var(--wait-soft);color:var(--wait);border-color:transparent}
 .ev-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .ev-body p{margin:0;font-size:14px;line-height:1.5}
 .ev-body small{font-size:12px;color:var(--muted)}
