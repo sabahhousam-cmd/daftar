@@ -39,7 +39,7 @@ const PRESETS = {
 // the database rules take a new staff account only with exactly these five, all off; «totals» and «companies»
 // came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
-const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'تعديل الأرصدة وحذف الزبائن', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
+const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'تعديل الأرصدة وحذف الزبائن والشركات والحسابات الخاصة', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
 const CUR_WORD = {IQD: 'دينار', USD: 'دولار'};
 const MONTHS = ['كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران', 'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول'];
@@ -79,7 +79,13 @@ const BOOK = {
       added: 'تمت إضافة الشركة', saved: 'تم حفظ بيانات الشركة', invNote: 'المادة', invNotePh: 'مثلاً: 10 كارتون شامبو',
       dueAfter: 'يجب أن يكون موعد التسديد بعد تاريخ القائمة.', approved: 'تمت الموافقة واحتُسبت على الشركة',
       acc: n => n, logAdd: n => `أضاف الشركة ${n}`, logEdit: n => `عدّل بيانات الشركة ${n}`, fallback: 'شركة',
-      sheet: 'الشركات', sheetEntries: 'حركات الشركات', colName: 'الشركة'}},
+      sheet: 'الشركات', sheetEntries: 'حركات الشركات', colName: 'الشركة',
+      rm: {title: n => `حذف الشركة ${n}؟`, removed: n => `تم حذف الشركة ${n}`, back: n => `استُعيدت الشركة ${n}`, withEntries: 'مع حركاتها',
+        lead: 'ستُحذف الشركة مع جميع حركاتها من القائمة والمجاميع.', note: 'يبقى الحذف مسجّلاً في سجل الحركات، ويمكنك استعادة الشركة مع حركاتها من هناك.',
+        waiting: 'لهذه الشركة حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الشركة.', btn: 'حذف الشركة',
+        offline: 'يتطلب حذف الشركة اتصالاً بالإنترنت.', offlineBack: 'تتطلب استعادة الشركة اتصالاً بالإنترنت', gone: 'تم حذف هذه الشركة.',
+        late: 'هذه الشركة محذوفة. استعدها من سجل الحركات قبل الموافقة، أو ارفض الحركة.', away: 'هذه الحركة لشركة محذوفة، وتعود معها عند استعادتها من سجل الحركات',
+        already: 'هذه الشركة موجودة في القائمة أصلاً', logRemove: n => `حذف الشركة ${n}`, logRestore: n => `استعاد الشركة ${n}`, was: 'وكان حسابها'}}},
   pv: {id: 'pv', key: 'pid', nameKey: 'pname', col: 'privates', ecol: 'pentries', perm: 'private', tab: 'private', view: 'person',
     types: PV_TYPES, order: ['lend', 'recv', 'borrow', 'repay'], open: {in: 'lend', out: 'borrow'}, invNo: false, icon: 'lock',
     st: bookState(), ui: {q: '', filter: 'all'}, subs: [],
@@ -95,7 +101,13 @@ const BOOK = {
       added: 'تمت الإضافة', saved: 'تم حفظ البيانات', invNote: 'ملاحظة', invNotePh: 'مثلاً: سلفة',
       dueAfter: 'يجب أن يكون موعد التسديد بعد تاريخ الحركة.', approved: 'تمت الموافقة واحتُسبت على الحساب',
       acc: n => `${n} (ديون خاصة)`, logAdd: n => `أضاف ${n} إلى الديون الخاصة`, logEdit: n => `عدّل بيانات ${n} في الديون الخاصة`, fallback: 'شخص',
-      sheet: 'ديون خاصة', sheetEntries: 'حركات الديون الخاصة', colName: 'الاسم'}}
+      sheet: 'ديون خاصة', sheetEntries: 'حركات الديون الخاصة', colName: 'الاسم',
+      rm: {title: n => `حذف حساب ${n}؟`, removed: n => `تم حذف حساب ${n}`, back: n => `استُعيد حساب ${n}`, withEntries: 'مع حركاته',
+        lead: 'سيُحذف الحساب مع جميع حركاته من الديون الخاصة ومجاميعها.', note: 'يبقى الحذف مسجّلاً في سجل الحركات، ويمكنك استعادة الحساب مع حركاته من هناك.',
+        waiting: 'لهذا الحساب حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الحساب.', btn: 'حذف الحساب',
+        offline: 'يتطلب حذف الحساب اتصالاً بالإنترنت.', offlineBack: 'تتطلب استعادة الحساب اتصالاً بالإنترنت', gone: 'تم حذف هذا الحساب.',
+        late: 'هذا الحساب محذوف. استعده من سجل الحركات قبل الموافقة، أو ارفض الحركة.', away: 'هذه الحركة لحساب محذوف، وتعود معه عند استعادته من سجل الحركات',
+        already: 'هذا الحساب موجود في القائمة أصلاً', logRemove: n => `حذف حساب ${n} من الديون الخاصة`, logRestore: n => `استعاد حساب ${n} إلى الديون الخاصة`, was: 'وكان رصيده'}}}
 };
 const BOOKS = [BOOK.co, BOOK.pv];
 const bookByView = type => BOOKS.find(B => B.view === type) || null;
@@ -237,7 +249,7 @@ const can = {
   editCustomer: u => has(u, 'customers'),
   setLimit: u => !!u && u.role === 'owner',
   adjust: u => !!u && u.role === 'owner',
-  removeCustomer: u => !!u && u.role === 'owner',
+  removeAccount: u => !!u && u.role === 'owner',
   message: u => has(u, 'messages')
 };
 
@@ -368,8 +380,8 @@ const entryLabel = e => { const B = bookOf(e);
 const isInvoice = e => { const B = bookOf(e); return B ? !!(B.types[e.type] || {}).inv : e.type === 'debt'; };
 const bRunText = (B, v, cur) => v > 0 ? `${B.t.in} ${amtText(v, cur)}` : v < 0 ? `${B.t.out} ${amtText(-v, cur)}` : 'مسدّد';
 const balText = (v, cur) => v < 0 ? `له ${amtText(-v, cur)}` : amtText(v, cur);
-// an entry sent from a phone that was offline when its customer was removed: it can be rejected, not counted
-const custGone = e => !bookOf(e) && !!(cust(e.cid) || {}).archived;
+// an entry sent from a phone that was offline when its account was removed: it can be rejected, not counted
+const accountGone = e => { const A = accountOf(e); return !!(A.get(e[A.key]) || {}).archived; };
 
 /* ---------- writes ---------- */
 const col = name => collection(fs, name);
@@ -909,10 +921,10 @@ function ledgerHTML(list, runAfter, showCust){
 function customerScreen(cid){
   const c = cust(cid);
   if (!c) return loadingBox();
-  if (c.archived) return `<div class="empty">${ic('trash')}<span>تم حذف هذا الزبون من الدفتر.</span><button class="btn btn-ghost" data-act="back">رجوع</button></div>`;
+  if (c.archived) return `<div class="empty">${ic('trash')}<span>${ACCOUNT.cust.t.gone}</span><button class="btn btn-ghost" data-act="back">رجوع</button></div>`;
   const u = me(), list = custList(cid);
   const b = bal(cid), d = dueInfo(cid), p = list ? pend(cid, list) : pend(cid);
-  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editCustomer(u) ? `<button class="mini" data-act="edit-cust" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}${can.removeCustomer(u) ? `<button class="iconbtn danger" data-act="rm-cust" aria-label="حذف الزبون">${ic('trash')}</button>` : ''}</section>`;
+  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editCustomer(u) ? `<button class="mini" data-act="edit-cust" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}${can.removeAccount(u) ? `<button class="iconbtn danger" data-act="rm-cust" aria-label="حذف الزبون">${ic('trash')}</button>` : ''}</section>`;
   if (c.phone) h += `<div class="phone-row"><span class="phone" dir="ltr">${esc(c.phone)}</span><a class="mini" href="tel:${esc(toLatin(c.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}اتصال</a><button class="mini" data-act="copy" data-text="${esc(c.phone)}">${ic('copy')}نسخ</button></div>`;
   const lines = [];
   for (const cur of ['IQD', 'USD']) {
@@ -1019,8 +1031,9 @@ function partyScreen(B, id){
   if (B.st.blocked) return rulesBox(B);
   const c = party(B, id);
   if (!c) return loadingBox();
+  if (c.archived) return `<div class="empty">${ic('trash')}<span>${B.t.rm.gone}</span><button class="btn btn-ghost" data-act="back">رجوع</button></div>`;
   const u = me(), list = bList(B, id), b = bBal(B, id), d = bDueInfo(B, id);
-  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editParty(B, u) ? `<button class="mini" data-act="edit-co" data-b="${B.id}" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}</section>`;
+  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editParty(B, u) ? `<button class="mini" data-act="edit-co" data-b="${B.id}" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}${can.removeAccount(u) ? `<button class="iconbtn danger" data-act="rm-cust" data-a="${B.id}" aria-label="${B.t.rm.btn}">${ic('trash')}</button>` : ''}</section>`;
   if (c.phone) h += `<div class="phone-row"><span class="phone" dir="ltr">${esc(c.phone)}</span><a class="mini" href="tel:${esc(toLatin(c.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}اتصال</a><button class="mini" data-act="copy" data-text="${esc(c.phone)}">${ic('copy')}نسخ</button></div>`;
   const lines = bBalLines(B, b);
   let foot = '';
@@ -1050,7 +1063,7 @@ function approvalsScreen(){
   let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هذه الحركات سجّلها الموظفون، مرتبة من الأقدم. وافق عليها من الأعلى إلى الأسفل: تُحتسب الحركة فور موافقتك، وتظهر لك رسالة الواتساب الخاصة بحركة الزبون جاهزة للإرسال.</p>`;
   if (!list.length) return h + `<div class="empty">${ic('check')}<span>لا توجد حركات بانتظار موافقتك.</span></div>`;
   return h + '<div class="stack">' + list.map(e => {
-    const B = bookOf(e), inv = isInvoice(e), gone = custGone(e), lc = !B && !gone && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
+    const B = bookOf(e), inv = isInvoice(e), gone = accountGone(e), lc = !B && !gone && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
     const pk = B ? `${B.id}:${e[B.key]}` : `c:${e.cid}`, older = seen.has(pk); seen.add(pk);
     const meta = [`<span>سجّلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
     if (B) meta.unshift(`<span>${B.t.kind}</span>`);
@@ -1063,7 +1076,7 @@ function approvalsScreen(){
         <span class="meta">${meta.join('<i class="dot"></i>')}</span>
         ${lc ? `<span class="warnbox">${ic('alert')}<span>يتجاوز سقف الزبون بمقدار ${amtText(lc.over, lc.cur)}. يصبح الرصيد ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
         ${older ? `<span class="warnbox soft">${ic('info')}<span>توجد أعلاها حركة أقدم ${B ? B.t.same : 'للزبون نفسه'} بانتظار الموافقة. وافق عليها أولاً ليظهر الرصيد صحيحاً.</span></span>` : ''}
-        ${gone ? `<span class="warnbox">${ic('alert')}<span>هذا الزبون محذوف من الدفتر. استعده من سجل الحركات قبل الموافقة، أو ارفض الحركة.</span></span>` : ''}
+        ${gone ? `<span class="warnbox">${ic('alert')}<span>${accountOf(e).t.late}</span></span>` : ''}
       </button>
       <div class="appr-actions">${gone ? '' : `<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`}<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
   }).join('') + '</div>';
@@ -1602,6 +1615,7 @@ function changesText(ch, cur){
 }
 function logText(ev){
   const who = esc(uname(ev.by)), cn = ev.cname ? `<b>${esc(ev.cname)}</b>` : '';
+  const withN = n => n ? ` مع ${countAr(n, 'حركة واحدة', 'حركتين', 'حركات', 'حركة')}` : '';
   const B = ev.coid ? BOOK.co : ev.pid ? BOOK.pv : null;
   if (B) {
     const pn = ev[B.nameKey], con = pn ? `<b>${esc(pn)}</b>` : B.t.fallback, acc = B.t.acc(con), T = B.types[ev.etype];
@@ -1615,11 +1629,13 @@ function logText(ev){
       case 'restore': return `${who} استعاد ${cw} إلى حساب ${acc}`;
       case `${B.id}_add`: return `${who} ${B.t.logAdd(con)}`;
       case `${B.id}_edit`: return `${who} ${B.t.logEdit(con)}`;
+      case `${B.id}_remove`: { const was = ['IQD', 'USD'].filter(c => ev.bal && ev.bal[c]).map(c => bRunText(B, ev.bal[c], c));
+        return `${who} ${B.t.rm.logRemove(con)}${withN(ev.entries)}${was.length ? `، ${B.t.rm.was} ${was.join(' و ')}` : ''}`; }
+      case `${B.id}_restore`: return `${who} ${B.t.rm.logRestore(con)}${withN(ev.entries)}`;
     }
     return '';
   }
   const what = ev.etype ? `${ev.adjust ? adjLabel(ev.etype) : ev.etype === 'debt' ? 'دين' : 'تسديد'} ${amtText(ev.amount, ev.cur)}` : '';
-  const withN = n => n ? ` مع ${countAr(n, 'حركة واحدة', 'حركتين', 'حركات', 'حركة')}` : '';
   switch (ev.type) {
     case 'create': return ev.etype === 'pay' ? `${who} سجّل ${what} من ${cn}` : `${who} سجّل ${what} على ${cn}`;
     case 'approve': return `${who} وافق على ${what} في حساب ${cn}`;
@@ -1645,7 +1661,7 @@ function logText(ev){
   }
   return '';
 }
-const EV_IC = {adjust: 'edit', customer_remove: 'trash', customer_restore: 'undo', co_add: 'building', co_edit: 'edit', pv_add: 'lock', pv_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
+const EV_IC = {adjust: 'edit', customer_remove: 'trash', customer_restore: 'undo', co_remove: 'trash', co_restore: 'undo', pv_remove: 'trash', pv_restore: 'undo', co_add: 'building', co_edit: 'edit', pv_add: 'lock', pv_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">يُحفظ هنا كل ما يجري في الدفتر، ولا يمكن لأحد مسحه. ومن هنا تستعيد ما حُذف من حركات وزبائن.</p>';
@@ -1656,11 +1672,14 @@ function logScreen(){
     if (day !== lastDay) { if (open) h += '</div>'; const rd = relDay(day); h += `<div class="day-h">${rd === 'اليوم' || rd === 'أمس' ? rd + '، ' + fmtDate(day) : fmtDate(day)}</div><div class="list">`; lastDay = day; open = true; }
     const e = ev.eid ? ent(ev.eid) : null;
     const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}" data-b="${ev.coid ? 'co' : ev.pid ? 'pv' : ''}">${ic('undo')}استعادة</button>` : '';
-    // a removed customer comes back from the line that removed them, while that removal still stands
-    const gone = ev.type === 'customer_remove' && ev.cid ? cust(ev.cid) : null;
-    const custBack = gone && gone.archived && gone.archivedAt === ev.archivedAt ? `<button class="mini" data-act="restore-cust" data-id="${ev.cid}">${ic('undo')}استعادة</button>` : '';
-    const away = ev.cid && cust(ev.cid) && cust(ev.cid).archived;
-    h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && !away && (!e || e.status === 'deleted') ? restore : custBack}</div>`;
+    // a removed account comes back from the line that removed it, while that removal still stands
+    const RA = {customer_remove: ACCOUNT.cust, co_remove: ACCOUNT.co, pv_remove: ACCOUNT.pv}[ev.type];
+    const gone = RA && ev[RA.key] ? RA.get(ev[RA.key]) : null;
+    const accBack = gone && gone.archived && gone.archivedAt === ev.archivedAt ? `<button class="mini" data-act="restore-cust" data-a="${RA.id}" data-id="${ev[RA.key]}">${ic('undo')}استعادة</button>` : '';
+    // an entry of a removed account comes back with it, not on its own
+    const EA = ev.coid ? ACCOUNT.co : ev.pid ? ACCOUNT.pv : ev.cid ? ACCOUNT.cust : null;
+    const away = EA && (EA.get(ev[EA.key]) || {}).archived;
+    h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && !away && (!e || e.status === 'deleted') ? restore : accBack}</div>`;
   }
   return h + (open ? '</div>' : '');
 }
@@ -1888,7 +1907,7 @@ function openEntryDetail(id){
   if (e.restoredAt) trail.push({t: e.restoredAt, i: 'undo', c: 'restore', x: `استعادها ${esc(uname(e.restoredBy))}`});
   trail.sort((a, b) => a.t - b.t);
   const btns = [];
-  if (can.approve(u) && e.status === 'pending') { if (!custGone(e)) btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`); btns.push(`<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`); }
+  if (can.approve(u) && e.status === 'pending') { if (!accountGone(e)) btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`); btns.push(`<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`); }
   if (can.editEntry(u, e)) btns.push(`<button class="btn btn-ghost grow" data-act="edit-entry" data-id="${e.id}">${ic('edit')}تعديل</button>`);
   if (!B && !e.adjust && can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
   if (can.deleteEntry(u, e)) btns.push(`<button class="btn btn-ghost danger" data-act="del-entry" data-id="${e.id}" aria-label="حذف">${ic('trash')}</button>`);
@@ -1974,91 +1993,108 @@ function saveAdjust(){
   toast(`تم تعديل الرصيد إلى ${balText(target, s.cur)}`);
 }
 
-/* «حذف الزبون» (owner): the customer and every entry of theirs leave the lists, totals and reports. Nothing is erased
-   (the rules forbid it): one timestamp marks the customer and those entries, so the log line that removed them brings back
-   exactly them, and not entries deleted one by one before. */
-function openRemoveCustomer(cid){
-  const c = cust(cid); if (!c || c.archived) return;
-  sheetState = {kind: 'rm-cust', cid, busy: false, err: ''};
-  openSheet(`${sheetHead(`حذف الزبون ${esc(c.name)}؟`, esc(c.note || ''))}<div class="sheet-body" id="rc-body"></div><div class="sheet-foot" id="rc-foot"></div>`, renderRemoveCustomer);
+/* Removing an account (owner only): a customer, a company or a private account leaves every list, total and report
+   together with its entries. Nothing is erased (the rules forbid it): one timestamp marks the account and those entries,
+   so «تراجع» or the log line that removed them brings back exactly them, and not entries deleted one by one before. */
+const ACCOUNT = {
+  cust: {id: 'cust', col: 'customers', ecol: 'entries', key: 'cid', nameKey: 'cname', ev: 'customer', view: 'customer', tab: 'customers',
+    get: id => cust(id), list: id => custList(id), bal: id => bal(id), waiting: (id, list) => pend(id, list).n,
+    money: (v, cur) => balText(v, cur), sum: list => { const s = summarize(list); return {bal: s.bal, due: s.due}; }, reset: {due: null},
+    t: {title: n => `حذف الزبون ${n}؟`, removed: n => `تم حذف الزبون ${n}`, back: n => `استُعيد الزبون ${n}`, withEntries: 'مع حركاته',
+      lead: 'سيُحذف الزبون مع جميع حركاته من القوائم والمجاميع والتقارير، ولن تُرسل إليه أي رسالة.',
+      note: 'يبقى الحذف مسجّلاً في سجل الحركات، ويمكنك استعادة الزبون مع حركاته من هناك.',
+      waiting: 'لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الزبون.', btn: 'حذف الزبون',
+      offline: 'يتطلب حذف الزبون اتصالاً بالإنترنت.', offlineBack: 'تتطلب استعادة الزبون اتصالاً بالإنترنت', gone: 'تم حذف هذا الزبون من الدفتر.',
+      late: 'هذا الزبون محذوف من الدفتر. استعده من سجل الحركات قبل الموافقة، أو ارفض الحركة.', away: 'هذه الحركة لزبون محذوف، وتعود معه عند استعادته من سجل الحركات',
+      already: 'هذا الزبون موجود في القائمة أصلاً'}}
+};
+for (const B of BOOKS) ACCOUNT[B.id] = {id: B.id, col: B.col, ecol: B.ecol, key: B.key, nameKey: B.nameKey, ev: B.id, view: B.view, tab: B.tab,
+  get: id => party(B, id), list: id => bList(B, id), bal: id => bBal(B, id), waiting: (id, list) => bPendList(B, id, list).length,
+  money: (v, cur) => bRunText(B, v, cur), sum: list => { const s = bSummarize(list); return {bal: s.bal, dueIn: s.dueIn, dueOut: s.dueOut}; },
+  reset: {dueIn: null, dueOut: null}, t: B.t.rm};
+function accountOf(e){ const B = bookOf(e); return B ? ACCOUNT[B.id] : ACCOUNT.cust; }
+function openRemoveAccount(A, id){
+  const c = A.get(id); if (!c || c.archived) return;
+  sheetState = {kind: 'rm-acc', a: A.id, id, busy: false, err: ''};
+  openSheet(`${sheetHead(A.t.title(esc(c.name)), esc(c.note || ''))}<div class="sheet-body" id="rc-body"></div><div class="sheet-foot" id="rc-foot"></div>`, renderRemoveAccount);
 }
-function renderRemoveCustomer(){
-  const s = sheetState; if (!s || s.kind !== 'rm-cust') return;
-  const body = $('#rc-body'), foot = $('#rc-foot'); if (!body || !foot) return;
-  const list = custList(s.cid), b = bal(s.cid), waiting = pend(s.cid, list).n;
-  const lines = ['IQD', 'USD'].filter(cur => b[cur]).map(cur => `<span>${balText(b[cur], cur)}</span>`);
+function renderRemoveAccount(){
+  const s = sheetState; if (!s || s.kind !== 'rm-acc') return;
+  const A = ACCOUNT[s.a], body = $('#rc-body'), foot = $('#rc-foot'); if (!body || !foot) return;
+  const list = A.list(s.id), b = A.bal(s.id), waiting = A.waiting(s.id, list);
+  const lines = ['IQD', 'USD'].filter(cur => b[cur]).map(cur => `<span>${A.money(b[cur], cur)}</span>`);
   body.innerHTML = `<div>
       <div class="kv"><span>الرصيد</span><span class="vals">${lines.length ? lines.join('') : '<span>مسدد بالكامل</span>'}</span></div>
       ${list ? `<div class="kv"><span>الحركات</span><b>${list.filter(e => e.status !== 'deleted').length}</b></div>` : ''}</div>
-    ${waiting ? `<div class="warnbox">${ic('alert')}<span>لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الزبون.</span></div>`
-      : `<p class="lead" style="color:var(--ink)">سيُحذف الزبون مع جميع حركاته من القوائم والمجاميع والتقارير، ولن تُرسل إليه أي رسالة.</p>
-    <p class="note">${ic('info')}<span>يبقى الحذف مسجّلاً في سجل الحركات، ويمكنك استعادة الزبون مع حركاته من هناك.</span></p>`}
+    ${waiting ? `<div class="warnbox">${ic('alert')}<span>${A.t.waiting}</span></div>`
+      : `<p class="lead" style="color:var(--ink)">${A.t.lead}</p>
+    <p class="note">${ic('info')}<span>${A.t.note}</span></p>`}
     ${s.err ? `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>` : ''}`;
-  foot.innerHTML = `<button class="btn btn-danger grow" id="rc-go" data-act="rm-cust-go" ${waiting || s.busy ? 'disabled' : ''}>${ic('trash')}${s.busy ? 'جاري الحذف…' : 'حذف الزبون'}</button><button class="btn btn-ghost grow" data-act="close-sheet" ${s.busy ? 'disabled' : ''}>إلغاء</button>`;
+  foot.innerHTML = `<button class="btn btn-danger grow" id="rc-go" data-act="rm-cust-go" ${waiting || s.busy ? 'disabled' : ''}>${ic('trash')}${s.busy ? 'جاري الحذف…' : A.t.btn}</button><button class="btn btn-ghost grow" data-act="close-sheet" ${s.busy ? 'disabled' : ''}>إلغاء</button>`;
 }
-async function runRemoveCustomer(){
-  const s = sheetState; if (!s || s.kind !== 'rm-cust' || s.busy) return;
-  const c = cust(s.cid); if (!c) return;
-  if (!navigator.onLine) { s.err = 'يتطلب حذف الزبون اتصالاً بالإنترنت.'; renderRemoveCustomer(); return; }
-  Object.assign(s, {busy: true, err: ''}); renderRemoveCustomer();
+async function runRemoveAccount(){
+  const s = sheetState; if (!s || s.kind !== 'rm-acc' || s.busy) return;
+  const A = ACCOUNT[s.a], c = A.get(s.id); if (!c) return;
+  if (!navigator.onLine) { s.err = A.t.offline; renderRemoveAccount(); return; }
+  Object.assign(s, {busy: true, err: ''}); renderRemoveAccount();
   const m = me();
   st.inflight++;
   try {
-    const snap = await getDocsFromServer(query(col('entries'), where('cid', '==', s.cid)));
+    const snap = await getDocsFromServer(query(col(A.ecol), where(A.key, '==', s.id)));
     const list = []; snap.forEach(d => list.push(Object.assign({id: d.id}, d.data())));
     if (list.some(e => e.status === 'pending')) {
-      s.busy = false; s.err = 'لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم احذف الزبون.';
-      if (sheetState === s) renderRemoveCustomer();
+      s.busy = false; s.err = A.t.waiting;
+      if (sheetState === s) renderRemoveAccount();
       return;
     }
-    const live = list.filter(e => e.status !== 'deleted'), fresh = cust(s.cid) || c;
+    const live = list.filter(e => e.status !== 'deleted'), fresh = A.get(s.id) || c;
     // a retry after a broken connection finishes the same removal, under the same mark
     const at = fresh.archived ? fresh.archivedAt : Date.now();
     if (!fresh.archived) {
       const b = writeBatch(fs);
-      b.update(ref('customers', s.cid), {archived: true, archivedAt: at, archivedBy: m.id, bal: {IQD: 0, USD: 0}, due: null});
-      b.set(doc(col('log')), Object.assign(logOf('customer_remove', null), {cid: s.cid, cname: c.name, archivedAt: at, entries: live.length, bal: summarize(list).bal}));
+      b.update(ref(A.col, s.id), Object.assign({archived: true, archivedAt: at, archivedBy: m.id, bal: {IQD: 0, USD: 0}}, A.reset));
+      b.set(doc(col('log')), Object.assign(logOf(`${A.ev}_remove`, null), {[A.key]: s.id, [A.nameKey]: c.name, archivedAt: at, entries: live.length, bal: A.sum(list).bal}));
       await b.commit();
     }
     // five documents per request keeps the security rules' document reads under Firestore's per-request limit
     for (let i = 0; i < live.length; i += 5) {
       const b = writeBatch(fs);
-      for (const e of live.slice(i, i + 5)) b.update(ref('entries', e.id), {status: 'deleted', prevStatus: e.status, deletedBy: m.id, deletedAt: at});
+      for (const e of live.slice(i, i + 5)) b.update(ref(A.ecol, e.id), {status: 'deleted', prevStatus: e.status, deletedBy: m.id, deletedAt: at});
       await b.commit();
     }
     closeSheet();
-    go({tab: 'customers', view: null});
-    toast(`تم حذف الزبون ${c.name}`, {act: 'restore-cust', id: s.cid, label: 'تراجع'});
+    go({tab: A.tab, view: null});
+    toast(A.t.removed(c.name), {act: 'restore-cust', a: A.id, id: s.id, label: 'تراجع'});
   } catch (err) {
     console.warn(err);
     s.busy = false;
-    s.err = 'توقف الحذف قبل اكتماله. اضغط «حذف الزبون» مرة أخرى لإكماله.';
-    if (sheetState === s) renderRemoveCustomer();
+    s.err = `توقف الحذف قبل اكتماله. اضغط «${A.t.btn}» مرة أخرى لإكماله.`;
+    if (sheetState === s) renderRemoveAccount();
     toastErr(err);
   } finally { st.inflight--; }
 }
-async function restoreCustomer(cid){
-  const c = cust(cid);
-  if (!c || !c.archived) { toast('هذا الزبون موجود في القائمة أصلاً'); return; }
-  if (!navigator.onLine) { toast('تتطلب استعادة الزبون اتصالاً بالإنترنت'); return; }
+async function restoreAccount(A, id){
+  const c = A.get(id);
+  if (!c || !c.archived) { toast(A.t.already); return; }
+  if (!navigator.onLine) { toast(A.t.offlineBack); return; }
   $('#toast-root').innerHTML = '';
   const m = me(), now = Date.now();
   st.inflight++;
   try {
-    const snap = await getDocsFromServer(query(col('entries'), where('cid', '==', cid)));
+    const snap = await getDocsFromServer(query(col(A.ecol), where(A.key, '==', id)));
     const list = []; snap.forEach(d => list.push(Object.assign({id: d.id}, d.data())));
     const back = list.filter(e => e.status === 'deleted' && e.deletedAt === c.archivedAt && !e.resetAt);
     for (let i = 0; i < back.length; i += 5) {
       const b = writeBatch(fs);
-      for (const e of back.slice(i, i + 5)) b.update(ref('entries', e.id), {status: e.prevStatus || 'approved', restoredBy: m.id, restoredAt: now});
+      for (const e of back.slice(i, i + 5)) b.update(ref(A.ecol, e.id), {status: e.prevStatus || 'approved', restoredBy: m.id, restoredAt: now});
       await b.commit();
     }
     for (const e of back) e.status = e.prevStatus || 'approved';
-    const sum = summarize(list), b = writeBatch(fs);
-    b.update(ref('customers', cid), {archived: false, restoredAt: now, restoredBy: m.id, bal: sum.bal, due: sum.due});
-    b.set(doc(col('log')), Object.assign(logOf('customer_restore', null), {cid, cname: c.name, entries: back.length}));
+    const b = writeBatch(fs);
+    b.update(ref(A.col, id), Object.assign({archived: false, restoredAt: now, restoredBy: m.id}, A.sum(list)));
+    b.set(doc(col('log')), Object.assign(logOf(`${A.ev}_restore`, null), {[A.key]: id, [A.nameKey]: c.name, entries: back.length}));
     await b.commit();
-    toast(back.length ? `استُعيد الزبون ${c.name} مع حركاته` : `استُعيد الزبون ${c.name}`);
+    toast(back.length ? `${A.t.back(c.name)} ${A.t.withEntries}` : A.t.back(c.name));
   } catch (err) { toastErr(err); } finally { st.inflight--; }
 }
 function openCustomerForm(cid, presetName){
@@ -2250,7 +2286,7 @@ function openInstall(){
 let toastTimer = null;
 function toast(text, action){
   clearTimeout(toastTimer);
-  $('#toast-root').innerHTML = `<div class="toast" role="status"><span>${esc(text)}</span>${action ? `<button data-act="${action.act}" data-id="${esc(action.id || '')}">${esc(action.label)}</button>` : ''}</div>`;
+  $('#toast-root').innerHTML = `<div class="toast" role="status"><span>${esc(text)}</span>${action ? `<button data-act="${action.act}" data-id="${esc(action.id || '')}"${action.a ? ` data-a="${esc(action.a)}"` : ''}>${esc(action.label)}</button>` : ''}</div>`;
   toastTimer = setTimeout(() => { $('#toast-root').innerHTML = ''; }, action ? 6500 : 3200);
 }
 function toastErr(err){
@@ -2289,7 +2325,8 @@ function syncBooks(){
       B.st.blocked = false;
       B.subs.push(onSnapshot(col(B.col), snap => {
         const L = []; snap.forEach(d => L.push(Object.assign({id: d.id}, d.data())));
-        B.st.byId = Object.fromEntries(L.map(c => [c.id, c])); B.st.list = L.sort(nameOrder); B.st.ready = true; render();
+        // removed accounts stay in byId for names in the log, and leave every list
+        B.st.byId = Object.fromEntries(L.map(c => [c.id, c])); B.st.list = L.filter(c => !c.archived).sort(nameOrder); B.st.ready = true; render();
       }, bSubErr(B)));
       B.subs.push(onSnapshot(query(col(B.ecol), where('status', '==', 'pending')), snap => { B.st.pending = ents(snap); render(); }, bSubErr(B)));
     } else if (!want && B.subs.length) stopBook(B);
@@ -2453,9 +2490,9 @@ const A = {
   'adjust'(){ if (can.adjust(me()) && ui.view && ui.view.type === 'customer' && custList(ui.view.id)) openAdjust(ui.view.id); },
   'a-cur'(d){ const s = sheetState; if (!s || s.kind !== 'adjust') return; s.cur = d.v; s.err = ''; adjustFill(); },
   'a-save'(){ saveAdjust(); },
-  'rm-cust'(){ if (can.removeCustomer(me()) && ui.view && ui.view.type === 'customer') openRemoveCustomer(ui.view.id); },
-  'rm-cust-go'(){ runRemoveCustomer(); },
-  'restore-cust'(d){ if (can.removeCustomer(me())) restoreCustomer(d.id); },
+  'rm-cust'(d){ const A = ACCOUNT[d.a || 'cust']; if (A && can.removeAccount(me()) && ui.view && ui.view.type === A.view) openRemoveAccount(A, ui.view.id); },
+  'rm-cust-go'(){ runRemoveAccount(); },
+  'restore-cust'(d){ const A = ACCOUNT[d.a || 'cust']; if (A && can.removeAccount(me())) restoreAccount(A, d.id); },
   'new-entry'(d){ openEntryForm({cid: ui.view.id, type: d.type}); },
   'open-entry'(d){ openEntryDetail(d.id); },
   'edit-entry'(d){ const e = ent(d.id); if (!e) return; const B = bookOf(e); if (B) openBookEntryForm(B, {id: e[B.key], edit: e}); else openEntryForm({cid: e.cid, edit: e}); },
@@ -2466,12 +2503,12 @@ const A = {
   async 'restore'(d){
     let e = ent(d.id);
     if (!e) { try { const s = await getDoc(ref(BOOK[d.b] ? BOOK[d.b].ecol : 'entries', d.id)); if (s.exists()) { e = Object.assign({id: s.id}, s.data()); st.cache.set(e.id, e); } } catch (err) { toastErr(err); return; } }
-    if (e && !bookOf(e) && (cust(e.cid) || {}).archived) { toast('هذه الحركة لزبون محذوف، وتعود معه عند استعادته من سجل الحركات'); return; }
+    if (e && accountGone(e)) { toast(accountOf(e).t.away); return; }
     if (e && e.status === 'deleted') { restoreEntry(e); closeSheet(); toast('استُعيدت الحركة إلى الحساب'); }
     else toast('هذه الحركة موجودة في الحساب أصلاً');
   },
   'approve'(d){
-    const e = ent(d.id); if (!e || e.status !== 'pending' || custGone(e)) return;
+    const e = ent(d.id); if (!e || e.status !== 'pending' || accountGone(e)) return;
     const B = bookOf(e); if (B) { approveEntry(e); closeSheet(); render(); toast(B.t.approved); return; }
     const before = bal(e.cid);
     const ne = approveEntry(e);
