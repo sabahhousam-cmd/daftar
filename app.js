@@ -975,11 +975,14 @@ function companyScreen(id){
 /* ---------- approvals, requests ---------- */
 const pendingCount = () => st.pending.length + st.coPending.length;
 function approvalsScreen(){
-  const list = st.pending.concat(st.coPending).sort((a, b) => b.at - a.at);
-  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هاي الحركات سجلها الموظفين. أول ما توافق تنحسب بالحساب، وحركة الزبون تطلعلك رسالتها الواتساب جاهزة.</p>`;
+  // oldest first: approving from the top follows the order things happened, so each WhatsApp message carries the
+  // balance as it really was (a payment approved before an earlier debt would leave that debt out of its «الباقي»)
+  const list = st.pending.concat(st.coPending).sort((a, b) => a.at - b.at), seen = new Set();
+  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هاي الحركات سجلها الموظفين، مرتبة من الأقدم. وافق عليها من فوك لجوة: أول ما توافق تنحسب بالحساب، وحركة الزبون تطلعلك رسالتها الواتساب جاهزة.</p>`;
   if (!list.length) return h + `<div class="empty">${ic('check')}<span>ماكو شي بانتظار موافقتك.</span></div>`;
   return h + '<div class="stack">' + list.map(e => {
     const isCo = !!e.coid, inv = isInvoice(e), lc = !isCo && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
+    const party = isCo ? `co:${e.coid}` : `c:${e.cid}`, older = seen.has(party); seen.add(party);
     const meta = [`<span>سجلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
     if (isCo) meta.unshift('<span>حساب شركة</span>');
     if (e.invNo) meta.push(`<span>قائمة رقم <span dir="auto">${esc(e.invNo)}</span></span>`);
@@ -990,6 +993,7 @@ function approvalsScreen(){
         ${e.note ? `<span>${esc(e.note)}</span>` : ''}
         <span class="meta">${meta.join('<i class="dot"></i>')}</span>
         ${lc ? `<span class="warnbox">${ic('alert')}<span>يعدّي سقف الزبون بـ ${amtText(lc.over, lc.cur)}. الرصيد يصير ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
+        ${older ? `<span class="warnbox soft">${ic('info')}<span>فوكها حركة أقدم لنفس ${isCo ? 'الشركة' : 'الزبون'} تنتظر. وافق عليها أول حتى يطلع الرصيد صحيح.</span></span>` : ''}
       </button>
       <div class="appr-actions"><button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button><button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
   }).join('') + '</div>';
@@ -2041,7 +2045,10 @@ function copyText(text, ok, el){
 let ownSub = null, dataSubs = [], viewSubs = [], viewKeyActive = '';
 function ents(snap){ const out = []; snap.forEach(d => { const e = Object.assign({id: d.id}, d.data()); st.cache.set(e.id, e); out.push(e); }); return out; }
 function onSubErr(err){ console.warn(err); if (err && err.code === 'permission-denied') toast('ما عندك صلاحية تشوف هالبيانات'); }
-function stopView(){ viewSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); viewKeyActive = ''; }
+// Leaving a customer's (or company's) page drops its entries too: kept after their listener stops, they went stale,
+// and bal() preferred them to the live balance, so the list and the next approval's WhatsApp message showed an old
+// figure (a payment approved after leaving the page said «الباقي» from before the debts approved meanwhile).
+function stopView(){ viewSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); viewKeyActive = ''; st.custEntries = null; st.coEntries = null; }
 function stopData(){ dataSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); stopView(); stopCo(); st.custReady = false; }
 // Companies are read only by the owner and staff with «الشركات», so their listeners follow that permission while
 // the app is open. permission-denied here means the database rules for companies are not published yet.
