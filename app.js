@@ -23,19 +23,20 @@ const fs = initializeFirestore(fbApp, {localCache: persistentLocalCache({tabMana
 const ROLES = {owner: 'المدير', supervisor: 'مشرف', staff: 'موظف'};
 const PERMS = [
   {k: 'balances', l: 'يشوف أرصدة كل الزبائن', s: 'رصيد كل زبون بالقائمة. بدونها يشوف رصيد الزبون اللي يفتحه بس.'},
-  {k: 'totals', l: 'يشوف مجموع الديون', s: 'المطلوب بالدينار والدولار من كل الزبائن، فوك القائمة.'},
+  {k: 'totals', l: 'يشوف مجموع الديون', s: 'المجموع فوك قائمة الزبائن، وفوك صفحة الشركات.'},
+  {k: 'companies', l: 'يشوف صفحة الشركات', s: 'حسابات الشركات، ويسجل قوائم وتسديدات تنتظر موافقتك.'},
   {k: 'reports', l: 'التقارير وتنزيل الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
   {k: 'edit', l: 'يعدّل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، وكل تعديل ينكتب بالسجل.'},
   {k: 'customers', l: 'يعدّل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
   {k: 'messages', l: 'يرسل رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. الرسالة تطلع من واتساب موبايله.'}
 ];
-const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
+const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
 const PRESETS = {
-  supervisor: {balances: true, totals: false, reports: true, edit: true, customers: true, messages: false},
-  staff: {balances: false, totals: false, reports: false, edit: false, customers: false, messages: false}
+  supervisor: {balances: true, totals: false, companies: false, reports: true, edit: true, customers: true, messages: false},
+  staff: {balances: false, totals: false, companies: false, reports: false, edit: false, customers: false, messages: false}
 };
-// the database rules take a new staff account only with exactly these five, all off; «totals» came later and
-// a missing permission counts as off
+// the database rules take a new staff account only with exactly these five, all off; «totals» and «companies»
+// came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
 const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وصلاحياتهم وشيل حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
@@ -45,6 +46,14 @@ const MONTHS_SHORT = ['ك2', 'شباط', 'آذار', 'نيسان', 'أيار', '
 const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const STATUS = {approved: 'مقبولة', pending: 'بانتظار الموافقة', rejected: 'مرفوضة', deleted: 'محذوفة'};
 const SHOP_DEFAULT = {name: 'محمود ناجي', phone: '', nextCode: 2};
+// A company's account runs both ways. bal > 0: they owe us (نطلبهم); bal < 0: we owe them (يطلبونا).
+// Invoices carry the invoice number and a due date; payments settle whichever side is open.
+const CO_TYPES = {
+  buy: {l: 'قائمة منهم', s: 'أخذنا منهم بضاعة بالدين', sign: -1, inv: true},
+  paid: {l: 'دفعنا لهم', s: 'دفعنا فلوس للشركة', sign: 1, inv: false},
+  sell: {l: 'قائمة إلهم', s: 'انطيناهم بضاعة بالدين', sign: 1, inv: true},
+  recv: {l: 'استلمنا منهم', s: 'الشركة دفعتلنا فلوس', sign: -1, inv: false}
+};
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -75,7 +84,8 @@ const ICONS = {
   store: '<path d="M4 9.5 5.5 4h13L20 9.5M4 9.5V20h16V9.5M4 9.5a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0"/><path d="M10 20v-5h4v5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 20.5a8 8 0 0 1 16 0"/>',
   cloud: '<path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4.3 4.3 0 0 1-.5 8.5Z"/><path d="m4 4 16 16"/>',
-  phoneapp: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>'
+  phoneapp: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  building: '<path d="M5 21V4.5A1.5 1.5 0 0 1 6.5 3h7A1.5 1.5 0 0 1 15 4.5V21"/><path d="M15 9h3.5a1.5 1.5 0 0 1 1.5 1.5V21M3 21h18M8.5 7h3M8.5 11h3M8.5 15h3"/>'
 };
 const ic = (n, cls) => `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
@@ -148,9 +158,10 @@ const st = {
   customers: [], custById: {}, custReady: false,
   pending: [], cache: new Map(),
   custEntries: null, myPending: [], myRejected: [], today: null, month: null, monthKey: '', logList: null,
+  companies: [], coById: {}, coReady: false, coBlocked: false, coPending: [], coEntries: null, myCoPending: [], myCoRejected: [],
   online: navigator.onLine, inflight: 0
 };
-const ui = {tab: 'customers', view: null, q: '', filter: 'all', reportTab: 'today', monthOffset: 0, scroll: {}, authMode: 'login'};
+const ui = {tab: 'customers', view: null, q: '', filter: 'all', coQ: '', coFilter: 'all', reportTab: 'today', monthOffset: 0, scroll: {}, authMode: 'login'};
 let sheetState = null;
 
 const me = () => st.me;
@@ -159,11 +170,14 @@ const uname = id => (st.usersById[id] || {}).name || 'مستخدم';
 const ownerUser = () => st.users.find(u => u.role === 'owner');
 const ownerName = () => (ownerUser() || {}).name || 'المدير';
 const cust = id => st.custById[id];
+const co = id => st.coById[id];
 const ent = id => st.cache.get(id);
 const has = (u, k) => !!u && (u.role === 'owner' || !!(u.perms && u.perms[k]));
 const can = {
   seeBalances: u => has(u, 'balances'),
   seeTotals: u => has(u, 'totals'),
+  companies: u => has(u, 'companies'),
+  editCo: u => has(u, 'companies') && has(u, 'customers'),
   reports: u => has(u, 'reports'),
   approve: u => !!u && u.role === 'owner',
   editEntry: (u, e) => e.status !== 'deleted' && e.status !== 'rejected' && (u.role === 'owner' || (has(u, 'edit') && e.status === 'pending')),
@@ -236,6 +250,63 @@ function limitCheck(cid, cur, add, excludeId){
   return projected > lim ? {lim, projected, over: r2(projected - lim), cur} : null;
 }
 
+/* companies: the same ledger, both ways */
+const coEffect = e => (CO_TYPES[e.type] ? CO_TYPES[e.type].sign : 0) * e.amount;
+// Per currency, the side the balance leans to is settled oldest first by everything on the other side;
+// the earliest due date among its invoices still open is when that side is due (dueIn: theirs, dueOut: ours).
+function coSummarize(list){
+  const approved = list.filter(e => e.status === 'approved').sort(sortChrono);
+  const b = {IQD: 0, USD: 0}, due = {1: null, '-1': null};
+  for (const e of approved) b[e.cur] = r2(b[e.cur] + coEffect(e));
+  for (const cur of ['IQD', 'USD']) {
+    const s = Math.sign(b[cur]); if (!s) continue;
+    const L = approved.filter(e => e.cur === cur);
+    let other = r2(L.filter(e => Math.sign(coEffect(e)) === -s).reduce((t, e) => t + e.amount, 0));
+    for (const e of L) {
+      if (Math.sign(coEffect(e)) !== s) continue;
+      if (other >= e.amount) { other = r2(other - e.amount); continue; }
+      other = 0;
+      if (CO_TYPES[e.type].inv && e.due && (!due[s] || e.due < due[s])) due[s] = e.due;
+    }
+  }
+  return {bal: b, dueIn: due[1], dueOut: due[-1]};
+}
+const coList = id => st.coEntries && st.coEntries.coid === id && st.coEntries.loaded ? st.coEntries.list : null;
+function coBal(id){
+  const L = coList(id); if (L) return coSummarize(L).bal;
+  const c = co(id) || {}; const b = c.bal || {};
+  return {IQD: r2(b.IQD || 0), USD: r2(b.USD || 0)};
+}
+const dueOf = due => { if (!due) return null; const days = daysBetween(todayISO(), due); return {due, days, late: days < 0}; };
+function coDueInfo(id){
+  const L = coList(id);
+  if (L) { const s = coSummarize(L); return {in: dueOf(s.dueIn), out: dueOf(s.dueOut)}; }
+  const c = co(id) || {}, b = coBal(id);
+  return {in: b.IQD > 0 || b.USD > 0 ? dueOf(c.dueIn) : null, out: b.IQD < 0 || b.USD < 0 ? dueOf(c.dueOut) : null};
+}
+const coPendList = (id, list) => (list || st.coPending).filter(e => e.coid === id && e.status === 'pending');
+function coLastAt(id){ const c = co(id) || {}; let t = c.lastAt || c.createdAt || 0; for (const e of st.coPending) if (e.coid === id && e.at > t) t = e.at; return t; }
+function coLastCur(id){
+  const L = coList(id);
+  if (L && L.length) return L.slice().sort((a, b) => (b.at || 0) - (a.at || 0))[0].cur;
+  const b = coBal(id); return b.USD && !b.IQD ? 'USD' : 'IQD';
+}
+function coTotals(){
+  const t = {in: {IQD: 0, USD: 0}, out: {IQD: 0, USD: 0}};
+  for (const c of st.companies) {
+    const b = coBal(c.id);
+    for (const cur of ['IQD', 'USD']) { if (b[cur] > 0) t.in[cur] += b[cur]; else if (b[cur] < 0) t.out[cur] -= b[cur]; }
+  }
+  for (const k of ['in', 'out']) for (const cur of ['IQD', 'USD']) t[k][cur] = r2(t[k][cur]);
+  return t;
+}
+// one entry of either ledger: whose account it is and what it was
+const partyName = e => (e.coid ? (co(e.coid) || {}).name : (cust(e.cid) || {}).name) || '';
+const entryLabel = e => !e.coid ? (e.type === 'debt' ? 'دين' : 'تسديد')
+  : e.opening ? `رصيد سابق: ${coEffect(e) > 0 ? 'نطلبهم' : 'يطلبونا'}` : (CO_TYPES[e.type] || {}).l || '';
+const isInvoice = e => e.coid ? !!(CO_TYPES[e.type] || {}).inv : e.type === 'debt';
+const coRunText = (v, cur) => v > 0 ? `نطلبهم ${amtText(v, cur)}` : v < 0 ? `يطلبونا ${amtText(-v, cur)}` : 'مصفّى';
+
 /* ---------- writes ---------- */
 const col = name => collection(fs, name);
 const ref = (name, id) => doc(fs, name, id);
@@ -244,10 +315,18 @@ function commit(batch, after){
   batch.commit().then(() => { st.inflight--; if (after) after(); }, err => { st.inflight--; toastErr(err); });
 }
 function logOf(type, e, extra){
+  const isCo = !!(e && e.coid);
   return Object.assign({at: Date.now(), by: me().id, type,
-    eid: e ? e.id || null : null, cid: e ? e.cid : null, cname: e ? ((cust(e.cid) || {}).name || '') : '',
-    etype: e ? e.type : null, amount: e ? e.amount : null, cur: e ? e.cur : null, no: e ? e.no || null : null}, extra || {});
+    eid: e ? e.id || null : null, cid: e && !isCo ? e.cid : null, cname: e && !isCo ? ((cust(e.cid) || {}).name || '') : '',
+    etype: e ? e.type : null, amount: e ? e.amount : null, cur: e ? e.cur : null, no: e ? e.no || null : null},
+    isCo ? Object.assign({coid: e.coid, coname: (co(e.coid) || {}).name || ''}, e.opening ? {opening: true} : null) : null, extra || {});
 }
+// customers' entries and companies' entries share the writes below; KIND says where each one lives
+const KIND = {
+  cust: {col: 'entries', parent: 'customers', key: 'cid', effect: e => effect(e), heal: id => recompute(id)},
+  co: {col: 'centries', parent: 'companies', key: 'coid', effect: e => coEffect(e), heal: id => coRecompute(id)}
+};
+const kindOf = e => e && e.coid ? KIND.co : KIND.cust;
 function nextReceipt(){ const m = me(); const seq = (m.seq || 0) + 1; return {seq, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`}; }
 function addEntry(o){
   const m = me(), now = Date.now(), isOwner = m.role === 'owner';
@@ -268,56 +347,56 @@ function addEntry(o){
   return full;
 }
 function approveEntry(e){
-  const m = me(), now = Date.now(), b = writeBatch(fs);
-  b.update(ref('entries', e.id), {status: 'approved', approvedBy: m.id, approvedAt: now});
-  b.update(ref('customers', e.cid), {[`bal.${e.cur}`]: increment(effect(e)), lastAt: now});
+  const K = kindOf(e), pid = e[K.key], m = me(), now = Date.now(), b = writeBatch(fs);
+  b.update(ref(K.col, e.id), {status: 'approved', approvedBy: m.id, approvedAt: now});
+  b.update(ref(K.parent, pid), {[`bal.${e.cur}`]: increment(K.effect(e)), lastAt: now});
   b.set(doc(col('log')), logOf('approve', e));
-  commit(b, () => recompute(e.cid));
+  commit(b, () => K.heal(pid));
   return Object.assign({}, e, {status: 'approved', approvedBy: m.id, approvedAt: now});
 }
 function rejectEntry(e, reason){
-  const m = me(), now = Date.now(), b = writeBatch(fs);
-  b.update(ref('entries', e.id), {status: 'rejected', rejectedBy: m.id, rejectedAt: now, reason: reason || ''});
+  const K = kindOf(e), m = me(), now = Date.now(), b = writeBatch(fs);
+  b.update(ref(K.col, e.id), {status: 'rejected', rejectedBy: m.id, rejectedAt: now, reason: reason || ''});
   b.set(doc(col('log')), logOf('reject', e, {reason: reason || ''}));
   commit(b);
 }
 function editEntry(e, patch){
-  const changes = {};
-  for (const k of ['amount', 'cur', 'note', 'date', 'due']) if (k in patch && patch[k] !== e[k]) changes[k] = [e[k] === undefined ? null : e[k], patch[k]];
+  const K = kindOf(e), pid = e[K.key], changes = {};
+  for (const k of ['amount', 'cur', 'note', 'date', 'due'].concat(e.coid ? ['invNo'] : [])) if (k in patch && patch[k] !== e[k]) changes[k] = [e[k] === undefined ? null : e[k], patch[k]];
   if (!Object.keys(changes).length) return false;
   const m = me(), now = Date.now();
   const data = {edits: (e.edits || []).concat([{by: m.id, at: now, changes}])};
   for (const k of Object.keys(changes)) data[k] = patch[k];
   const b = writeBatch(fs);
-  b.update(ref('entries', e.id), data);
+  b.update(ref(K.col, e.id), data);
   const ne = Object.assign({}, e, patch);
   if (e.status === 'approved') {
     const inc = {};
-    inc[e.cur] = (inc[e.cur] || 0) - effect(e);
-    inc[ne.cur] = (inc[ne.cur] || 0) + effect(ne);
+    inc[e.cur] = (inc[e.cur] || 0) - K.effect(e);
+    inc[ne.cur] = (inc[ne.cur] || 0) + K.effect(ne);
     const cu = {};
     for (const c of Object.keys(inc)) if (r2(inc[c])) cu[`bal.${c}`] = increment(r2(inc[c]));
-    if (Object.keys(cu).length) b.update(ref('customers', e.cid), cu);
+    if (Object.keys(cu).length) b.update(ref(K.parent, pid), cu);
   }
   b.set(doc(col('log')), logOf('edit', ne, {changes}));
-  commit(b, e.status === 'approved' ? () => recompute(e.cid) : null);
+  commit(b, e.status === 'approved' ? () => K.heal(pid) : null);
   return true;
 }
 function deleteEntry(e){
-  const m = me(), now = Date.now(), b = writeBatch(fs);
-  b.update(ref('entries', e.id), {status: 'deleted', prevStatus: e.status, deletedBy: m.id, deletedAt: now});
-  if (e.status === 'approved') b.update(ref('customers', e.cid), {[`bal.${e.cur}`]: increment(-effect(e))});
+  const K = kindOf(e), pid = e[K.key], m = me(), now = Date.now(), b = writeBatch(fs);
+  b.update(ref(K.col, e.id), {status: 'deleted', prevStatus: e.status, deletedBy: m.id, deletedAt: now});
+  if (e.status === 'approved') b.update(ref(K.parent, pid), {[`bal.${e.cur}`]: increment(-K.effect(e))});
   b.set(doc(col('log')), logOf('delete', e));
-  commit(b, e.status === 'approved' ? () => recompute(e.cid) : null);
+  commit(b, e.status === 'approved' ? () => K.heal(pid) : null);
   return Object.assign({}, e, {status: 'deleted', prevStatus: e.status});
 }
 function restoreEntry(e){
   if (!e || e.status !== 'deleted') return;
-  const m = me(), now = Date.now(), prev = e.prevStatus || 'approved', b = writeBatch(fs);
-  b.update(ref('entries', e.id), {status: prev, restoredBy: m.id, restoredAt: now});
-  if (prev === 'approved') b.update(ref('customers', e.cid), {[`bal.${e.cur}`]: increment(effect(e))});
+  const K = kindOf(e), pid = e[K.key], m = me(), now = Date.now(), prev = e.prevStatus || 'approved', b = writeBatch(fs);
+  b.update(ref(K.col, e.id), {status: prev, restoredBy: m.id, restoredAt: now});
+  if (prev === 'approved') b.update(ref(K.parent, pid), {[`bal.${e.cur}`]: increment(K.effect(e))});
   b.set(doc(col('log')), logOf('restore', e));
-  commit(b, prev === 'approved' ? () => recompute(e.cid) : null);
+  commit(b, prev === 'approved' ? () => K.heal(pid) : null);
 }
 function addCustomer(o, open){
   const m = me(), now = Date.now(), isOwner = m.role === 'owner';
@@ -369,6 +448,75 @@ function healWith(cid, list){
   if (r2(cb.IQD || 0) !== s.bal.IQD || r2(cb.USD || 0) !== s.bal.USD) patch.bal = s.bal;
   if ((c.due || null) !== s.due) patch.due = s.due;
   if (Object.keys(patch).length) updateDoc(ref('customers', cid), patch).catch(() => {});
+}
+function addCoEntry(o){
+  const m = me(), now = Date.now(), isOwner = m.role === 'owner', inv = CO_TYPES[o.type].inv;
+  const r = doc(col('centries')), {seq, no} = nextReceipt();
+  const e = {coid: o.coid, no, type: o.type, amount: o.amount, cur: o.cur, note: o.note || '', invNo: inv ? (o.invNo || '') : '',
+    date: o.date, due: inv ? (o.due || null) : null, by: m.id, at: now, serverAt: serverTimestamp(),
+    status: isOwner ? 'approved' : 'pending', edits: []};
+  if (isOwner) { e.approvedBy = m.id; e.approvedAt = now; }
+  const full = Object.assign({id: r.id}, e);
+  const b = writeBatch(fs);
+  b.set(r, e);
+  b.update(ref('users', m.id), {seq});
+  if (isOwner) b.update(ref('companies', o.coid), {[`bal.${o.cur}`]: increment(coEffect(e)), lastAt: now});
+  b.set(doc(col('log')), logOf('create', full));
+  st.me = Object.assign({}, m, {seq});
+  commit(b, isOwner ? () => coRecompute(o.coid) : null);
+  return full;
+}
+// open: {amount, cur, dir} — dir 1 they owe us, -1 we owe them; it becomes one «رصيد سابق» entry
+function addCompany(o, open){
+  const m = me(), now = Date.now(), isOwner = m.role === 'owner';
+  const r = doc(col('companies'));
+  const c = {name: o.name, phone: o.phone || '', note: o.note || '', createdAt: now, createdBy: m.id,
+    bal: {IQD: 0, USD: 0}, dueIn: null, dueOut: null, lastAt: now};
+  if (open && isOwner) c.bal[open.cur] = open.dir * open.amount;
+  const b = writeBatch(fs);
+  b.set(r, c);
+  b.set(doc(col('log')), Object.assign(logOf('co_add', null), {coid: r.id, coname: c.name}));
+  if (open) {
+    const er = doc(col('centries')), {seq, no} = nextReceipt();
+    const e = {coid: r.id, no, type: open.dir > 0 ? 'sell' : 'buy', amount: open.amount, cur: open.cur, note: '', invNo: '',
+      date: todayISO(), due: null, by: m.id, at: now, serverAt: serverTimestamp(), status: isOwner ? 'approved' : 'pending', edits: [], opening: true};
+    if (isOwner) { e.approvedBy = m.id; e.approvedAt = now; }
+    b.set(er, e);
+    b.update(ref('users', m.id), {seq});
+    st.me = Object.assign({}, m, {seq});
+    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {coname: c.name}));
+  }
+  commit(b);
+  // show the new company right away; the live snapshot replaces this copy
+  const local = Object.assign({id: r.id}, c);
+  if (!st.coById[r.id]) { st.coById[r.id] = local; st.companies = st.companies.concat([local]).sort(nameOrder); }
+  return local;
+}
+function editCompany(id, patch){
+  const c = co(id), data = {};
+  for (const k of Object.keys(patch)) if (patch[k] !== c[k]) data[k] = patch[k];
+  if (!Object.keys(data).length) return false;
+  const b = writeBatch(fs);
+  b.update(ref('companies', id), data);
+  b.set(doc(col('log')), Object.assign(logOf('co_edit', null), {coid: id, coname: patch.name || c.name}));
+  commit(b);
+  return true;
+}
+async function coRecompute(id){
+  if (!me() || me().role !== 'owner') return;
+  try {
+    const snap = await getDocsFromServer(query(col('centries'), where('coid', '==', id)));
+    const list = []; snap.forEach(d => list.push(Object.assign({id: d.id}, d.data())));
+    coHealWith(id, list);
+  } catch (err) { /* offline: the company page corrects it next time it opens online */ }
+}
+function coHealWith(id, list){
+  const c = co(id); if (!c) return;
+  const s = coSummarize(list), patch = {}, cb = c.bal || {};
+  if (r2(cb.IQD || 0) !== s.bal.IQD || r2(cb.USD || 0) !== s.bal.USD) patch.bal = s.bal;
+  if ((c.dueIn || null) !== s.dueIn) patch.dueIn = s.dueIn;
+  if ((c.dueOut || null) !== s.dueOut) patch.dueOut = s.dueOut;
+  if (Object.keys(patch).length) updateDoc(ref('companies', id), patch).catch(() => {});
 }
 function userWrite(u, data, logExtra){
   const b = writeBatch(fs);
@@ -503,6 +651,7 @@ const viewKey = () => ui.view ? `${ui.view.type}:${ui.view.id || ''}` : `tab:${u
 function viewTitle(){
   const v = ui.view;
   if (v.type === 'customer') return (cust(v.id) || {}).name || '';
+  if (v.type === 'company') return (co(v.id) || {}).name || '';
   return {log: 'سجل الحركات', users: 'الموظفين والصلاحيات', settings: 'إعدادات المحل'}[v.type] || '';
 }
 function whoChip(u){ return `<button class="who" data-act="account" aria-label="حسابي"><span class="who-av">${esc(initial(u.name))}</span><span class="who-txt"><b>${esc(u.name)}</b><small>${ROLES[u.role]}</small></span></button>`; }
@@ -515,20 +664,23 @@ const netHTML = () => st.online ? '' : `<div class="ribbon">${ic('cloud')}<span>
 function renderNet(){ const el = $('#net'); if (el) el.innerHTML = netHTML(); }
 function navView(){
   const u = me(), tabs = [['customers', 'الزبائن', 'users']];
+  if (can.companies(u)) tabs.push(['companies', 'الشركات', 'building']);
   tabs.push(u.role === 'owner' ? ['approvals', 'الموافقات', 'inbox'] : ['requests', 'طلباتي', 'inbox']);
   if (can.reports(u)) tabs.push(['reports', 'التقارير', 'chart']);
   if (u.role === 'owner') tabs.push(['more', 'المزيد', 'more']);
-  const pc = st.pending.length;
+  const pc = pendingCount();
   return `<nav class="nav" aria-label="الأقسام"><div class="nav-in">${tabs.map(([k, l, i]) =>
     `<button class="tab" data-act="tab" data-tab="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ic(i)}<span>${l}</span>${k === 'approvals' && pc ? `<span class="badge">${pc}</span>` : ''}</button>`).join('')}</div></nav>`;
 }
 function screenView(){
   if (ui.view) {
     if (ui.view.type === 'customer') return customerScreen(ui.view.id);
+    if (ui.view.type === 'company') return companyScreen(ui.view.id);
     if (ui.view.type === 'log') return logScreen();
     if (ui.view.type === 'users') return usersScreen();
     if (ui.view.type === 'settings') return settingsScreen();
   }
+  if (ui.tab === 'companies') return companiesScreen();
   if (ui.tab === 'approvals') return approvalsScreen();
   if (ui.tab === 'requests') return requestsScreen();
   if (ui.tab === 'reports') return reportsScreen();
@@ -538,11 +690,13 @@ function screenView(){
 const loadingBox = () => `<div class="empty"><div class="spin" role="status" aria-label="جاري التحميل"></div><span>جاري التحميل…</span></div>`;
 function appView(){
   const u = me();
-  const allowed = {customers: 1, approvals: u.role === 'owner', requests: u.role !== 'owner', reports: can.reports(u), more: u.role === 'owner'};
+  const allowed = {customers: 1, companies: can.companies(u), approvals: u.role === 'owner', requests: u.role !== 'owner', reports: can.reports(u), more: u.role === 'owner'};
   if (!allowed[ui.tab]) { ui.tab = 'customers'; ui.view = null; }
-  if (ui.view && ui.view.type !== 'customer' && u.role !== 'owner') ui.view = null;
+  if (ui.view && ui.view.type !== 'customer' && ui.view.type !== 'company' && u.role !== 'owner') ui.view = null;
   if (ui.view && ui.view.type === 'customer' && st.custReady && !cust(ui.view.id)) ui.view = null;
-  const fab = !ui.view && ui.tab === 'customers' ? `<button class="fab" data-act="add-cust">${ic('plus')}زبون جديد</button>` : '';
+  if (ui.view && ui.view.type === 'company' && (!can.companies(u) || (st.coReady && !co(ui.view.id)))) ui.view = null;
+  const fab = ui.view ? '' : ui.tab === 'customers' ? `<button class="fab" data-act="add-cust">${ic('plus')}زبون جديد</button>`
+    : ui.tab === 'companies' && st.coReady && !st.coBlocked ? `<button class="fab" data-act="add-co">${ic('plus')}شركة جديدة</button>` : '';
   return barView() + `<div id="net">${netHTML()}</div><main class="screen" id="main">${screenView()}</main>` + navView() + fab;
 }
 function view(){
@@ -625,9 +779,9 @@ function custListHTML(){
 function customersScreen(){
   const u = me(), showBal = can.seeBalances(u), d = new Date();
   let h = `<div class="titlebar"><h1 class="h1">الزبائن</h1><span class="today">${WEEKDAYS[d.getDay()]} ${fmtDate(todayISO())}</span></div>`;
-  if (u.role === 'owner' && st.pending.length) {
-    const pc = st.pending.length;
-    h += `<button class="notice" data-act="tab" data-tab="approvals"><span class="count">${pc}</span><span class="txt"><b>${countAr(pc, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')} بانتظار موافقتك</b><small>سجلها الموظفين، وتنحسب على الزبون بعد ما توافق</small></span>${ic('back', 'flip')}</button>`;
+  if (u.role === 'owner' && pendingCount()) {
+    const pc = pendingCount();
+    h += `<button class="notice" data-act="tab" data-tab="approvals"><span class="count">${pc}</span><span class="txt"><b>${countAr(pc, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')} بانتظار موافقتك</b><small>سجلها الموظفين، وتنحسب بعد ما توافق</small></span>${ic('back', 'flip')}</button>`;
   }
   if (u.role === 'owner' && st.custReady && st.customers.length && Date.now() - (st.shop.lastBackupAt || 0) > 7 * 864e5) {
     h += `<div class="backup">${ic('download')}<span class="txt"><b>${st.shop.lastBackupAt ? `آخر نسخة احتياطية ${relDay(isoOf(new Date(st.shop.lastBackupAt)))}` : 'بعدك ما نزّلت نسخة احتياطية'}</b><small>نزّل نسخة إكسل وخزنها بإيميلك. ياخذ ثواني.</small></span><button class="btn btn-ghost" data-act="export">نزّل هسه</button></div>`;
@@ -647,22 +801,27 @@ function customersScreen(){
 
 /* ---------- one customer ---------- */
 function entRow(e, runAfter, showCust){
-  const d = parseISO(e.date);
+  const d = parseISO(e.date), inv = isInvoice(e);
   const cls = e.status === 'pending' ? ' is-wait' : e.status === 'rejected' ? ' is-rej' : '';
   let stamp = '';
   if (e.status === 'pending') stamp = '<span class="stamp wait">بانتظار الموافقة</span>';
   else if (e.status === 'rejected') stamp = '<span class="stamp rej">مرفوضة</span>';
   else if (e.status === 'approved' && e.by !== e.approvedBy) stamp = `<span class="stamp ok">وافق ${esc(uname(e.approvedBy))}</span>`;
   const meta = [`<span class="no" dir="ltr">${noTag(e.no)}</span>`, `<span>سجلها ${esc(uname(e.by))}</span>`];
-  if (e.type === 'debt' && e.due && e.status !== 'rejected') meta.push(`<span>الموعد ${fmtDate(e.due)}</span>`);
+  if (e.invNo) meta.push(`<span>قائمة رقم <span dir="auto">${esc(e.invNo)}</span></span>`);
+  if (inv && e.due && e.status !== 'rejected') meta.push(`<span>الموعد ${fmtDate(e.due)}</span>`);
   if (e.edits && e.edits.length) meta.push('<span>معدّلة</span>');
-  const tl = `<span class="tl ${e.type}">${e.type === 'debt' ? 'دين' : 'تسديد'}</span>`;
-  const what = showCust ? `${tl}<span class="cname">${esc((cust(e.cid) || {}).name || '')}</span>` : `${tl}${e.note ? `<span class="note">${esc(e.note)}</span>` : ''}`;
-  const run = runAfter && runAfter.has(e.id) ? `<span class="run">${runAfter.get(e.id) < 0 ? `إله ${amtText(-runAfter.get(e.id), e.cur)}` : `الرصيد ${amtText(runAfter.get(e.id), e.cur)}`}</span>` : '';
+  const tl = `<span class="tl ${inv ? 'debt' : 'pay'}">${entryLabel(e)}</span>`;
+  const what = showCust ? `${tl}<span class="cname">${esc(partyName(e))}</span>` : `${tl}${e.note ? `<span class="note">${esc(e.note)}</span>` : ''}`;
+  let run = '';
+  if (runAfter && runAfter.has(e.id)) {
+    const v = runAfter.get(e.id);
+    run = `<span class="run">${e.coid ? coRunText(v, e.cur) : v < 0 ? `إله ${amtText(-v, e.cur)}` : `الرصيد ${amtText(v, e.cur)}`}</span>`;
+  }
   return `<button class="ent${cls}" data-act="open-entry" data-id="${e.id}">
     <span class="date"><b>${d.getDate()}</b><small>${MONTHS_SHORT[d.getMonth()]}</small></span>
     <span class="body"><span class="what">${what}</span>${showCust && e.note ? `<span class="meta">${esc(e.note)}</span>` : ''}<span class="meta">${meta.join('<i class="dot"></i>')}</span>${stamp ? `<span class="stamps">${stamp}</span>` : ''}${e.status === 'rejected' && e.reason ? `<span class="reason">${esc(e.reason)}</span>` : ''}</span>
-    <span class="fig">${amt(e.amount, e.cur, e.type === 'debt' ? 'owe' : 'cred')}${run}</span></button>`;
+    <span class="fig">${amt(e.amount, e.cur, inv ? 'owe' : 'cred')}${run}</span></button>`;
 }
 function ledgerHTML(list, runAfter, showCust){
   let h = '', lastM = '';
@@ -713,27 +872,133 @@ function customerScreen(cid){
   return h;
 }
 
+/* ---------- companies ---------- */
+const CO_FILTERS = {
+  all: {l: 'الكل', test: () => true},
+  in: {l: 'نطلبهم', test: r => r.b.IQD > 0 || r.b.USD > 0},
+  out: {l: 'يطلبونا', test: r => r.b.IQD < 0 || r.b.USD < 0},
+  late: {l: 'متأخرة', test: r => !!((r.d.in && r.d.in.late) || (r.d.out && r.d.out.late))}
+};
+const coRows = () => st.companies.map(c => ({c, b: coBal(c.id), d: coDueInfo(c.id), p: coPendList(c.id).length, last: coLastAt(c.id)}));
+// «تسديدنا»: when we pay them; «تسديدهم»: when they pay us
+function coDueText(x, ours){ const w = ours ? 'تسديدنا' : 'تسديدهم'; return x.late ? `${w} متأخر ${daysAr(-x.days)}` : x.days === 0 ? `${w} اليوم` : `${w} بعد ${daysAr(x.days)}`; }
+function coDuePills(d){
+  const out = [];
+  for (const [x, ours] of [[d.out, true], [d.in, false]]) if (x && (x.late || x.days <= 5)) out.push(`<span class="pill ${x.late ? 'late' : 'soon'}">${coDueText(x, ours)}</span>`);
+  return out;
+}
+function coBalLines(b){
+  const lines = [];
+  for (const cur of ['IQD', 'USD']) {
+    if (b[cur] > 0) lines.push(`<span class="dline"><small class="dlbl">نطلبهم</small>${amt(b[cur], cur, 'owe')}</span>`);
+    else if (b[cur] < 0) lines.push(`<span class="dline"><small class="dlbl">يطلبونا</small>${amt(-b[cur], cur, 'cred')}</span>`);
+  }
+  return lines;
+}
+function coChipsHTML(){
+  const rows = coRows();
+  return Object.keys(CO_FILTERS).map(k => `<button class="chip" data-act="co-filter" data-f="${k}" aria-pressed="${ui.coFilter === k}">${CO_FILTERS[k].l}<span class="n">${rows.filter(CO_FILTERS[k].test).length}</span></button>`).join('');
+}
+function coRow(r){
+  const {c, b, d, p} = r, sub = [], pills = coDuePills(d);
+  if (c.note) sub.push(`<span>${esc(c.note)}</span>`);
+  sub.push(`<span>آخر حركة ${relDay(isoOf(new Date(r.last || Date.now())))}</span>`);
+  if (p) pills.push(`<span class="pill wait">${p === 1 ? 'حركة معلقة' : countAr(p, '', 'حركتين معلقة', 'حركات معلقة', 'حركة معلقة')}</span>`);
+  const lines = coBalLines(b);
+  return `<button class="row" data-act="open-co" data-id="${c.id}"><span class="av">${esc(initial(c.name))}</span>
+    <span class="main"><span class="name">${esc(c.name)}</span><span class="sub">${sub.join('<i class="dot"></i>')}</span>${pills.length ? `<span class="pills">${pills.join('')}</span>` : ''}</span>
+    <span class="bal">${lines.length ? lines.join('') : '<span class="pill ok">مصفّى</span>'}</span></button>`;
+}
+const coRulesBox = () => `<div class="empty">${ic('shield')}<span>${me().role === 'owner'
+  ? 'صفحة الشركات تحتاج تحديث قواعد الحماية بـ Firebase. أول ما تتحدث، اضغط «حاول مرة ثانية».'
+  : 'صفحة الشركات بعدها ما تجهّزت. راجع المدير.'}</span><button class="btn btn-ghost" data-act="reload">حاول مرة ثانية</button></div>`;
+function coListHTML(){
+  if (st.coBlocked) return coRulesBox();
+  if (!st.coReady) return loadingBox();
+  const q = norm(ui.coQ), qd = toLatin(ui.coQ).replace(/\D/g, '');
+  let rows = coRows();
+  if (q) rows = rows.filter(r => norm(r.c.name).includes(q) || norm(r.c.note).includes(q) || (qd.length >= 3 && toLatin(r.c.phone).replace(/\D/g, '').includes(qd)));
+  rows = rows.filter(CO_FILTERS[ui.coFilter].test);
+  if (!rows.length) {
+    if (q) return `<div class="empty">${ic('search')}<span>ماكو شركة بهالاسم.</span><button class="linkbtn" data-act="add-co" data-name="${esc(ui.coQ.trim())}">أضف «${esc(ui.coQ.trim())}» كشركة جديدة</button></div>`;
+    if (!st.companies.length) return `<div class="empty">${ic('building')}<span>بعد ماكو شركات. اضغط «شركة جديدة» وأضف أول شركة، ووياها رصيدها السابق.</span></div>`;
+    return `<div class="empty">${ic('building')}<span>ماكو شركات بهالقائمة.</span></div>`;
+  }
+  return `<div class="list">${rows.map(coRow).join('')}</div>`;
+}
+function totLines(sum, cls){
+  const parts = [];
+  if (sum.IQD || !sum.USD) parts.push(`<span class="val ${cls}">${fmtNum(sum.IQD, 'IQD')}<small>د.ع</small></span>`);
+  if (sum.USD) parts.push(`<span class="val ${cls}">${fmtNum(sum.USD, 'USD')}<small>$</small></span>`);
+  return parts.join('');
+}
+function companiesScreen(){
+  const u = me(), d = new Date();
+  let h = `<div class="titlebar"><h1 class="h1">الشركات</h1><span class="today">${WEEKDAYS[d.getDay()]} ${fmtDate(todayISO())}</span></div>`;
+  if (st.coBlocked) return h + coRulesBox();
+  if (can.seeTotals(u) && st.coReady) {
+    const t = coTotals();
+    h += `<section class="totals" aria-label="مجموع حسابات الشركات">
+      <div class="total"><span class="lbl">نطلب الشركات</span>${totLines(t.in, 'owe')}</div>
+      <div class="total"><span class="lbl">الشركات تطلبنا</span>${totLines(t.out, 'cred')}</div></section>`;
+  }
+  h += `<label class="search" for="co-q">${ic('search')}<input id="co-q" type="search" placeholder="دوّر بالاسم أو الرقم" value="${esc(ui.coQ)}" autocomplete="off" enterkeyhint="search"></label>`;
+  h += `<div class="chips" id="co-chips" role="group" aria-label="تصفية">${coChipsHTML()}</div>`;
+  return h + `<div id="co-list">${coListHTML()}</div>`;
+}
+function companyScreen(id){
+  if (st.coBlocked) return coRulesBox();
+  const c = co(id);
+  if (!c) return loadingBox();
+  const u = me(), list = coList(id), b = coBal(id), d = coDueInfo(id);
+  let h = `<section class="cust-head"><span class="av lg">${esc(initial(c.name))}</span><div class="info"><h1 class="h1">${esc(c.name)}</h1>${c.note ? `<span class="sub">${esc(c.note)}</span>` : ''}</div>${can.editCo(u) ? `<button class="mini" data-act="edit-co" data-id="${c.id}">${ic('edit')}تعديل</button>` : ''}</section>`;
+  if (c.phone) h += `<div class="phone-row"><span class="phone" dir="ltr">${esc(c.phone)}</span><a class="mini" href="tel:${esc(toLatin(c.phone).replace(/[^\d+]/g, ''))}">${ic('phone')}اتصال</a><button class="mini" data-act="copy" data-text="${esc(c.phone)}">${ic('copy')}نسخ</button></div>`;
+  const lines = coBalLines(b);
+  let foot = '';
+  for (const [x, ours] of [[d.out, true], [d.in, false]]) if (x) foot += `<div class="pills" style="align-items:center"><span class="pill ${x.late ? 'late' : x.days <= 5 ? 'soon' : 'off'}">${coDueText(x, ours)}</span><span>الموعد ${fmtDate(x.due)}</span></div>`;
+  const pl = coPendList(id, list);
+  if (pl.length) foot += `<div>${ic('clock')} بانتظار الموافقة: ${pl.map(e => `${entryLabel(e)} ${amtText(e.amount, e.cur)}`).join('، ')}</div>`;
+  h += `<section class="balance" aria-label="حساب الشركة"><span class="k">الحساب</span>
+    <div class="bal-lines">${lines.length ? lines.join('') : '<span class="settled">الحساب مصفّى</span>'}</div>${foot ? `<div class="bal-foot">${foot}</div>` : ''}</section>`;
+  h += `<div class="actions quad">${['buy', 'paid', 'sell', 'recv'].map(k =>
+    `<button class="btn ${CO_TYPES[k].inv ? 'btn-debt' : 'btn-pay'}" data-act="new-co-entry" data-type="${k}">${ic(CO_TYPES[k].inv ? 'plus' : 'check')}${CO_TYPES[k].l}</button>`).join('')}</div>`;
+  if (!list) return h + `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2></div>${loadingBox()}</section>`;
+  const all = list.filter(e => e.status !== 'deleted');
+  const runAfter = new Map(), run = {IQD: 0, USD: 0};
+  for (const e of all.filter(x => x.status === 'approved').sort(sortChrono)) { run[e.cur] = r2(run[e.cur] + coEffect(e)); runAfter.set(e.id, run[e.cur]); }
+  const sorted = all.slice().sort((a, b2) => -sortChrono(a, b2));
+  h += `<section class="stack"><div class="sec-h"><h2>كشف الحساب</h2><span>${countAr(sorted.length, 'حركة وحدة', 'حركتين', 'حركات', 'حركة')}</span></div>
+    ${sorted.length ? ledgerHTML(sorted, runAfter, false) : `<div class="empty">${ic('doc')}<span>ماكو حركات بعد. سجّل أول قائمة أو تسديد من الأزرار فوق.</span></div>`}</section>`;
+  return h;
+}
+
 /* ---------- approvals, requests ---------- */
+const pendingCount = () => st.pending.length + st.coPending.length;
 function approvalsScreen(){
-  const list = st.pending.slice().sort((a, b) => b.at - a.at);
-  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هاي الحركات سجلها الموظفين. أول ما توافق تنحسب على الزبون، وتطلعلك رسالة الواتساب جاهزة.</p>`;
+  const list = st.pending.concat(st.coPending).sort((a, b) => b.at - a.at);
+  let h = `<div class="titlebar"><h1 class="h1">بانتظار موافقتك</h1></div><p class="lead">هاي الحركات سجلها الموظفين. أول ما توافق تنحسب بالحساب، وحركة الزبون تطلعلك رسالتها الواتساب جاهزة.</p>`;
   if (!list.length) return h + `<div class="empty">${ic('check')}<span>ماكو شي بانتظار موافقتك.</span></div>`;
   return h + '<div class="stack">' + list.map(e => {
-    const c = cust(e.cid) || {name: ''}, lc = e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
+    const isCo = !!e.coid, inv = isInvoice(e), lc = !isCo && e.type === 'debt' ? limitCheck(e.cid, e.cur, e.amount, e.id) : null;
+    const meta = [`<span>سجلها ${esc(uname(e.by))}</span>`, `<span>${fmtStamp(e.at)}</span>`];
+    if (isCo) meta.unshift('<span>حساب شركة</span>');
+    if (e.invNo) meta.push(`<span>قائمة رقم <span dir="auto">${esc(e.invNo)}</span></span>`);
+    if (e.due) meta.push(`<span>الموعد ${fmtDate(e.due)}</span>`);
     return `<article class="appr"><button class="appr-main" data-act="open-entry" data-id="${e.id}">
-        <span class="appr-top"><span class="cname">${esc(c.name)}</span><span class="tl ${e.type}">${e.type === 'debt' ? 'دين جديد' : 'تسديد'}</span></span>
-        <span class="appr-amt">${amt(e.amount, e.cur, e.type === 'debt' ? 'owe' : 'cred')}</span>
+        <span class="appr-top"><span class="cname">${esc(partyName(e))}</span><span class="tl ${inv ? 'debt' : 'pay'}">${isCo ? entryLabel(e) : e.type === 'debt' ? 'دين جديد' : 'تسديد'}</span></span>
+        <span class="appr-amt">${amt(e.amount, e.cur, inv ? 'owe' : 'cred')}</span>
         ${e.note ? `<span>${esc(e.note)}</span>` : ''}
-        <span class="meta"><span>سجلها ${esc(uname(e.by))}</span><i class="dot"></i><span>${fmtStamp(e.at)}</span>${e.due ? `<i class="dot"></i><span>الموعد ${fmtDate(e.due)}</span>` : ''}</span>
+        <span class="meta">${meta.join('<i class="dot"></i>')}</span>
         ${lc ? `<span class="warnbox">${ic('alert')}<span>يعدّي سقف الزبون بـ ${amtText(lc.over, lc.cur)}. الرصيد يصير ${amtText(lc.projected, lc.cur)} والسقف ${amtText(lc.lim, lc.cur)}.</span></span>` : ''}
       </button>
       <div class="appr-actions"><button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button><button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button></div></article>`;
   }).join('') + '</div>';
 }
 function requestsScreen(){
-  const list = st.myPending.concat(st.myRejected).sort((a, b) => b.at - a.at);
-  let h = `<div class="titlebar"><h1 class="h1">طلباتي</h1></div><p class="lead">كل حركة تسجلها تروح إلى ${esc(ownerName())}. هنا تشوف شنو بعده ينتظر، وشنو رفضه وليش. المقبولة تلكاها بكشف حساب الزبون.</p>`;
-  h += `<div class="meta-line" style="margin-top:0"><span>${countAr(st.myPending.length, 'وحدة تنتظر', 'ثنتين تنتظر', 'تنتظر', 'تنتظر')}</span>${st.myRejected.length ? `<span class="late-txt">${countAr(st.myRejected.length, 'وحدة مرفوضة', 'ثنتين مرفوضة', 'مرفوضة', 'مرفوضة')}</span>` : ''}</div>`;
+  const waiting = st.myPending.concat(st.myCoPending), rejected = st.myRejected.concat(st.myCoRejected);
+  const list = waiting.concat(rejected);
+  let h = `<div class="titlebar"><h1 class="h1">طلباتي</h1></div><p class="lead">كل حركة تسجلها تروح إلى ${esc(ownerName())}. هنا تشوف شنو بعده ينتظر، وشنو رفضه وليش. المقبولة تلكاها بكشف الحساب.</p>`;
+  h += `<div class="meta-line" style="margin-top:0"><span>${countAr(waiting.length, 'وحدة تنتظر', 'ثنتين تنتظر', 'تنتظر', 'تنتظر')}</span>${rejected.length ? `<span class="late-txt">${countAr(rejected.length, 'وحدة مرفوضة', 'ثنتين مرفوضة', 'مرفوضة', 'مرفوضة')}</span>` : ''}</div>`;
   if (!list.length) return h + `<div class="empty">${ic('inbox')}<span>ماكو شي ينتظر. افتح أي زبون وسجّل دين أو تسديد.</span></div>`;
   return h + ledgerHTML(list.slice().sort((a, b) => -sortChrono(a, b)), null, true);
 }
@@ -830,6 +1095,26 @@ async function exportExcel(btn, fileName){
     const s2 = X.utils.aoa_to_sheet(r2rows); s2['!cols'] = [10, 12, 22, 8, 14, 8, 26, 13, 16, 10, 18, 10, 18, 28].map(w => ({wch: w}));
     X.utils.book_append_sheet(wb, s1, 'الأرصدة');
     X.utils.book_append_sheet(wb, s2, 'الحركات');
+    // the companies come after the customers' sheets, under their own headers, so importing this file back still
+    // reads only «الأرصدة»
+    if (can.companies(me()) && !st.coBlocked) {
+      const cl = ents(await getDocs(col('centries')));
+      const byCo = {}; for (const e of cl) (byCo[e.coid] = byCo[e.coid] || []).push(e);
+      const r3 = [['الشركة', 'الهاتف', 'ملاحظة', 'نطلبهم دينار', 'يطلبونا دينار', 'نطلبهم دولار', 'يطلبونا دولار', 'حركات معلقة']];
+      for (const c of st.companies) {
+        const L = byCo[c.id] || [], s = coSummarize(L), pn = L.filter(e => e.status === 'pending').length;
+        r3.push([c.name, c.phone || '', c.note || '', Math.max(0, s.bal.IQD), Math.max(0, -s.bal.IQD), Math.max(0, s.bal.USD), Math.max(0, -s.bal.USD), pn]);
+      }
+      const r4 = [['رقم الوصل', 'التاريخ', 'الشركة', 'النوع', 'رقم القائمة', 'المبلغ', 'العملة', 'المادة / ملاحظة', 'موعد التسديد', 'الحالة', 'سجلها', 'وقت التسجيل', 'وافق عليها', 'وقت الموافقة', 'سبب الرفض']];
+      for (const e of cl.slice().sort(sortChrono)) {
+        r4.push([e.no || '', e.date, (co(e.coid) || {}).name || '', entryLabel(e) || e.type, e.invNo || '', e.amount, CUR_WORD[e.cur], e.note || '', e.due || '', STATUS[e.status] || e.status,
+          uname(e.by), stampISO(e.at), e.approvedBy ? uname(e.approvedBy) : '', stampISO(e.approvedAt), e.reason || '']);
+      }
+      const s3 = X.utils.aoa_to_sheet(r3); s3['!cols'] = [24, 16, 18, 15, 15, 14, 14, 12].map(w => ({wch: w}));
+      const s4 = X.utils.aoa_to_sheet(r4); s4['!cols'] = [10, 12, 22, 12, 12, 14, 8, 26, 13, 16, 10, 18, 10, 18, 28].map(w => ({wch: w}));
+      X.utils.book_append_sheet(wb, s3, 'الشركات');
+      X.utils.book_append_sheet(wb, s4, 'حركات الشركات');
+    }
     const out = X.write(wb, {bookType: 'xlsx', type: 'array'});
     const blob = new Blob([out], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -1231,7 +1516,7 @@ function moreScreen(){
       ${isStandalone() ? '' : `<button class="row" data-act="install"><span class="mi">${ic('phoneapp')}</span><span class="main"><span class="name">ثبّت التطبيق على الموبايل</span><span class="sub">حتى تطلع أيقونة محمود ناجي على الشاشة</span></span>${ic('back', 'flip')}</button>`}
     </div>`;
 }
-const FIELD_AR = {type: 'النوع', amount: 'المبلغ', cur: 'العملة', note: 'الملاحظة', date: 'التاريخ', due: 'موعد التسديد'};
+const FIELD_AR = {type: 'النوع', amount: 'المبلغ', cur: 'العملة', note: 'الملاحظة', date: 'التاريخ', due: 'موعد التسديد', invNo: 'رقم القائمة'};
 function changesText(ch, cur){
   return Object.keys(ch || {}).map(k => {
     const [a, b] = ch[k];
@@ -1241,6 +1526,21 @@ function changesText(ch, cur){
 }
 function logText(ev){
   const who = esc(uname(ev.by)), cn = ev.cname ? `<b>${esc(ev.cname)}</b>` : '';
+  if (ev.coid) {
+    const con = ev.coname ? `<b>${esc(ev.coname)}</b>` : 'شركة', T = CO_TYPES[ev.etype];
+    const cw = T ? `${ev.opening ? `رصيد سابق (${T.sign > 0 ? 'نطلبهم' : 'يطلبونا'})` : T.l} ${amtText(ev.amount, ev.cur)}` : '';
+    switch (ev.type) {
+      case 'create': return `${who} سجّل ${cw} بحساب ${con}`;
+      case 'approve': return `${who} وافق على ${cw} بحساب ${con}`;
+      case 'reject': return `${who} رفض ${cw} بحساب ${con}${ev.reason ? `: ${esc(ev.reason)}` : ''}`;
+      case 'edit': return `${who} عدّل الوصل <span dir="ltr">${noTag(ev.no)}</span> بحساب ${con}: ${esc(changesText(ev.changes, ev.cur))}`;
+      case 'delete': return `${who} حذف ${cw} من حساب ${con}`;
+      case 'restore': return `${who} رجّع ${cw} لحساب ${con}`;
+      case 'co_add': return `${who} أضاف الشركة ${con}`;
+      case 'co_edit': return `${who} عدّل بيانات الشركة ${con}`;
+    }
+    return '';
+  }
   const what = ev.etype ? `${ev.etype === 'debt' ? 'دين' : 'تسديد'} ${amtText(ev.amount, ev.cur)}` : '';
   switch (ev.type) {
     case 'create': return ev.etype === 'pay' ? `${who} سجّل ${what} من ${cn}` : `${who} سجّل ${what} على ${cn}`;
@@ -1263,7 +1563,7 @@ function logText(ev){
   }
   return '';
 }
-const EV_IC = {create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
+const EV_IC = {co_add: 'building', co_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">كل شي ينسوى بالدفتر ينحفظ هنا، ومحد يكدر يمسحه. الحركة المحذوفة تكدر ترجعها.</p>';
@@ -1273,7 +1573,7 @@ function logScreen(){
     const day = isoOf(new Date(ev.at));
     if (day !== lastDay) { if (open) h += '</div>'; const rd = relDay(day); h += `<div class="day-h">${rd === 'اليوم' || rd === 'أمس' ? rd + '، ' + fmtDate(day) : fmtDate(day)}</div><div class="list">`; lastDay = day; open = true; }
     const e = ev.eid ? ent(ev.eid) : null;
-    const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}">${ic('undo')}رجّعها</button>` : '';
+    const restore = ev.type === 'delete' && ev.eid ? `<button class="mini" data-act="restore" data-id="${ev.eid}" data-co="${ev.coid ? 1 : ''}">${ic('undo')}رجّعها</button>` : '';
     h += `<div class="ev"><span class="ev-ic ${ev.type}">${ic(EV_IC[ev.type] || 'info')}</span><div class="ev-body"><p>${logText(ev)}</p><small>${fmtTime(ev.at)}</small></div>${restore && (!e || e.status === 'deleted') ? restore : ''}</div>`;
   }
   return h + (open ? '</div>' : '');
@@ -1485,14 +1785,14 @@ function saveEntryForm(){
 }
 function openEntryDetail(id){
   const e = ent(id); if (!e) return;
-  const c = cust(e.cid) || {name: ''}, u = me();
+  const u = me(), isCo = !!e.coid, inv = isInvoice(e), label = entryLabel(e);
   const rows = [
-    ['النوع', `<span class="tl ${e.type}" style="font-size:14px">${e.type === 'debt' ? 'دين' : 'تسديد'}</span>`],
-    ['المبلغ', `<span class="vals">${amt(e.amount, e.cur, e.type === 'debt' ? 'owe' : 'cred')}<span class="words">${amountWords(e.amount, e.cur)}</span></span>`, true],
-    [e.type === 'debt' ? 'المادة' : 'ملاحظة', e.note ? esc(e.note) : '—'],
-    ['التاريخ', fmtDate(e.date, true)]
+    ['النوع', `<span class="tl ${inv ? 'debt' : 'pay'}" style="font-size:14px">${label}</span>`],
+    ['المبلغ', `<span class="vals">${amt(e.amount, e.cur, inv ? 'owe' : 'cred')}<span class="words">${amountWords(e.amount, e.cur)}</span></span>`, true]
   ];
-  if (e.type === 'debt') rows.push(['موعد التسديد', e.due ? fmtDate(e.due, true) : 'بدون موعد']);
+  if (isCo && inv && !e.opening) rows.push(['رقم القائمة', e.invNo ? `<span dir="auto">${esc(e.invNo)}</span>` : '—']);
+  rows.push([inv ? 'المادة' : 'ملاحظة', e.note ? esc(e.note) : '—'], ['التاريخ', fmtDate(e.date, true)]);
+  if (inv) rows.push(['موعد التسديد', e.due ? fmtDate(e.due, true) : 'بدون موعد']);
   rows.push(['رقم الوصل', `<span dir="ltr">${noTag(e.no)}</span>`], ['الحالة', `<span class="pill ${e.status === 'approved' ? 'ok' : e.status === 'pending' ? 'wait' : e.status === 'rejected' ? 'late' : 'off'}">${STATUS[e.status] || ''}</span>`]);
   const trail = [{t: e.at, i: 'plus', c: 'create', x: `سجلها ${esc(uname(e.by))}${e.approvedBy && e.approvedBy === e.by ? '، وانحسبت مباشرة' : ''}`}];
   for (const edt of (e.edits || [])) trail.push({t: edt.at, i: 'edit', c: 'edit', x: `عدّلها ${esc(uname(edt.by))}: ${esc(changesText(edt.changes, e.cur))}`});
@@ -1504,30 +1804,30 @@ function openEntryDetail(id){
   const btns = [];
   if (can.approve(u) && e.status === 'pending') btns.push(`<button class="btn btn-primary grow" data-act="approve" data-id="${e.id}">${ic('check')}قبول</button>`, `<button class="btn btn-ghost danger grow" data-act="reject" data-id="${e.id}">${ic('x')}رفض</button>`);
   if (can.editEntry(u, e)) btns.push(`<button class="btn btn-ghost grow" data-act="edit-entry" data-id="${e.id}">${ic('edit')}تعديل</button>`);
-  if (can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
+  if (!isCo && can.message(u) && e.status === 'approved') btns.push(`<button class="btn btn-ghost grow" data-act="resend" data-id="${e.id}">${ic('wa')}رسالة</button>`);
   if (can.deleteEntry(u, e)) btns.push(`<button class="btn btn-ghost danger" data-act="del-entry" data-id="${e.id}" aria-label="حذف">${ic('trash')}</button>`);
-  if (e.status === 'deleted' && u.role === 'owner') btns.push(`<button class="btn btn-ghost grow" data-act="restore" data-id="${e.id}">${ic('undo')}رجّعها</button>`);
-  openSheet(`${sheetHead(`${e.type === 'debt' ? 'دين' : 'تسديد'} <span dir="ltr">${noTag(e.no)}</span>`, esc(c.name))}
+  if (e.status === 'deleted' && u.role === 'owner') btns.push(`<button class="btn btn-ghost grow" data-act="restore" data-id="${e.id}" data-co="${isCo ? 1 : ''}">${ic('undo')}رجّعها</button>`);
+  openSheet(`${sheetHead(`${label} <span dir="ltr">${noTag(e.no)}</span>`, esc(partyName(e)))}
     <div class="sheet-body"><div>${rows.map(([k, v, raw]) => `<div class="kv"><span>${k}</span>${raw ? v : `<span>${v}</span>`}</div>`).join('')}</div>
     <div class="stack" style="gap:6px"><span class="lbl">مراحل الحركة</span><div class="trail">${trail.map(s => `<div class="ev"><span class="ev-ic ${s.c}">${ic(s.i)}</span><div class="ev-body"><p>${s.x}</p><small>${fmtStamp(s.t)}</small></div></div>`).join('')}</div></div></div>
     ${btns.length ? `<div class="sheet-foot">${btns.join('')}</div>` : ''}`);
 }
 function openReject(id){
-  const e = ent(id), c = cust(e.cid) || {name: ''};
+  const e = ent(id), isCo = !!e.coid, who = isCo ? 'الشركة' : 'الزبون';
   sheetState = {kind: 'reject', id};
-  const reasons = ['المبلغ غلط', 'الزبون غلط', 'مكررة', 'ما استلمنا الفلوس'];
-  openSheet(`${sheetHead('رفض الحركة', `${esc(c.name)} · ${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtText(e.amount, e.cur)}`)}
+  const reasons = isCo ? ['المبلغ غلط', 'الشركة غلط', 'مكررة', 'رقم القائمة غلط'] : ['المبلغ غلط', 'الزبون غلط', 'مكررة', 'ما استلمنا الفلوس'];
+  openSheet(`${sheetHead('رفض الحركة', `${esc(partyName(e))} · ${entryLabel(e)} ${amtText(e.amount, e.cur)}`)}
     <form class="sheet-body" id="reject-form" novalidate>
       <div class="chips wrap" role="group" aria-label="أسباب جاهزة">${reasons.map(r => `<button type="button" class="chip" data-act="reason" data-v="${esc(r)}">${esc(r)}</button>`).join('')}</div>
       <div class="field"><label for="r-reason">سبب الرفض</label><textarea class="input" id="r-reason" placeholder="اكتب السبب حتى ${esc(uname(e.by))} يعرف شنو يصلح"></textarea></div>
-      <p class="note">${ic('info')}<span>الحركة ما تنحسب على الزبون، و${esc(uname(e.by))} يشوف السبب بصفحة طلباته.</span></p>
+      <p class="note">${ic('info')}<span>الحركة ما تنحسب على ${who}، و${esc(uname(e.by))} يشوف السبب بصفحة طلباته.</span></p>
     </form>
     <div class="sheet-foot"><button class="btn btn-danger grow" data-act="do-reject" data-id="${id}">${ic('x')}رفض</button></div>`);
 }
 function openDelete(id){
-  const e = ent(id), c = cust(e.cid) || {name: ''};
-  openSheet(`${sheetHead(`حذف الوصل <span dir="ltr">${noTag(e.no)}</span>؟`, esc(c.name))}
-    <div class="sheet-body"><p class="lead" style="color:var(--ink)">${e.type === 'debt' ? 'دين' : 'تسديد'} ${amtText(e.amount, e.cur)}${e.note ? ` (${esc(e.note)})` : ''} ينشال من حساب ${esc(c.name)} وما ينحسب. يبقى بسجل الحركات وتكدر ترجعه.</p></div>
+  const e = ent(id), name = esc(partyName(e));
+  openSheet(`${sheetHead(`حذف الوصل <span dir="ltr">${noTag(e.no)}</span>؟`, name)}
+    <div class="sheet-body"><p class="lead" style="color:var(--ink)">${entryLabel(e)} ${amtText(e.amount, e.cur)}${e.note ? ` (${esc(e.note)})` : ''} ينشال من حساب ${name} وما ينحسب. يبقى بسجل الحركات وتكدر ترجعه.</p></div>
     <div class="sheet-foot"><button class="btn btn-danger grow" data-act="confirm-del" data-id="${id}">${ic('trash')}حذف</button><button class="btn btn-ghost grow" data-act="close-sheet">إلغاء</button></div>`);
 }
 function openCustomerForm(cid, presetName){
@@ -1570,6 +1870,115 @@ function saveCustomerForm(){
   closeSheet(); ui.q = '';
   go({view: {type: 'customer', id: c.id}});
   toast(open && u.role !== 'owner' ? `انضاف الزبون، والرصيد السابق ينتظر موافقة ${ownerName()}` : 'انضاف الزبون');
+}
+/* a company's invoice or payment */
+function openCoEntryForm(o){
+  const c = co(o.coid), u = me(), ed = o.edit || null, isStaff = u.role !== 'owner';
+  const type = ed ? ed.type : o.type;
+  sheetState = {kind: 'co-entry', coid: o.coid, edit: ed, type, cur: ed ? ed.cur : coLastCur(o.coid), err: ''};
+  sheetState.due = ed ? (ed.due || null) : (CO_TYPES[type].inv ? addDays(todayISO(), 30) : null);
+  openSheet(`${sheetHead('<span id="g-title"></span>', esc(c.name))}
+    <form class="sheet-body" id="co-entry-form" novalidate>
+      ${ed ? '' : `<div class="seg quad" role="group" aria-label="نوع الحركة">${Object.keys(CO_TYPES).map(k => `<button type="button" data-act="g-type" data-v="${k}" class="${CO_TYPES[k].inv ? 'inv' : 'pay'}">${CO_TYPES[k].l}</button>`).join('')}</div>`}
+      <div class="field"><label for="g-amount">المبلغ</label>
+        <div class="amount-row"><input class="input amount" id="g-amount" inputmode="decimal" dir="ltr" autocomplete="off" placeholder="0" value="${ed ? fmtNum(ed.amount, ed.cur) : ''}">
+        <div class="seg cur" role="group" aria-label="العملة"><button type="button" data-act="g-cur" data-v="IQD">د.ع</button><button type="button" data-act="g-cur" data-v="USD">$</button></div></div>
+        <div class="hint" id="g-hint" aria-live="polite"></div></div>
+      <div class="field" id="g-inv-wrap"><label for="g-inv">رقم القائمة</label><input class="input" id="g-inv" dir="auto" autocomplete="off" placeholder="الرقم المكتوب على القائمة" value="${esc(ed ? ed.invNo || '' : '')}"></div>
+      <div class="field"><label for="g-note" id="g-note-l">المادة</label><input class="input" id="g-note" autocomplete="off" value="${esc(ed ? ed.note : '')}"></div>
+      <div class="two"><div class="field"><label for="g-date">التاريخ</label><input class="input" id="g-date" type="date" value="${ed ? ed.date : todayISO()}"></div>
+        <div class="field" id="g-due-wrap"><label for="g-due">موعد التسديد</label><input class="input" id="g-due" type="date" value="${sheetState.due || ''}"></div></div>
+      <div class="chips wrap" id="g-due-chips" role="group" aria-label="مواعيد سريعة"></div>
+      <div id="g-warn" class="stack" style="gap:8px"></div>
+      ${isStaff && !ed ? `<p class="note">${ic('clock')}<span>تنرسل إلى ${esc(ownerName())} حتى يوافق عليها، وبعدها تنحسب على الشركة.</span></p>` : ''}
+    </form>
+    <div class="sheet-foot"><button class="btn btn-primary grow" data-act="g-save">${isStaff && !ed ? 'إرسال للموافقة' : 'حفظ'}</button></div>`,
+    () => { coFormSync(); const a = $('#g-amount'); if (a && !ed) a.focus({preventScroll: true}); });
+}
+function coFormSync(){
+  const s = sheetState; if (!s || s.kind !== 'co-entry') return;
+  const T = CO_TYPES[s.type];
+  $('#g-title').textContent = s.edit ? `تعديل الوصل ${noTag(s.edit.no)}` : T.l;
+  document.querySelectorAll('[data-act="g-type"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === s.type)));
+  document.querySelectorAll('[data-act="g-cur"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === s.cur)));
+  $('#g-inv-wrap').hidden = !T.inv;
+  $('#g-note-l').textContent = T.inv ? 'المادة' : 'ملاحظة';
+  $('#g-note').placeholder = T.inv ? 'مثلاً: 10 كارتون شامبو' : 'مثلاً: نقد، أو حوالة';
+  $('#g-due-wrap').hidden = !T.inv;
+  const chips = $('#g-due-chips'); chips.hidden = !T.inv;
+  if (T.inv) {
+    const base = $('#g-date').value || todayISO();
+    chips.innerHTML = [[7, 'بعد أسبوع'], [14, 'بعد أسبوعين'], [30, 'بعد شهر'], [0, 'بدون موعد']].map(([n, l]) =>
+      `<button type="button" class="chip" data-act="g-due" data-d="${n}" aria-pressed="${n ? s.due === addDays(base, n) : !s.due}">${l}</button>`).join('');
+  }
+  const amount = parseAmount($('#g-amount').value);
+  $('#g-hint').textContent = amount > 0 ? amountWords(amount, s.cur) : '';
+  let w = '';
+  if (s.err) w = `<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>`;
+  else if (amount > 0 && !s.edit) {
+    // what the account becomes in this currency (a staff member's entry counts only after approval)
+    const after = r2(coBal(s.coid)[s.cur] + T.sign * (s.cur === 'IQD' ? Math.round(amount) : r2(amount)));
+    w = `<p class="note">${ic('info')}<span>بعدها الحساب يصير: ${coRunText(after, s.cur)}${me().role === 'owner' ? '' : `، بعد موافقة ${esc(ownerName())}`}</span></p>`;
+  }
+  $('#g-warn').innerHTML = w;
+}
+function saveCoEntryForm(){
+  const s = sheetState; if (!s || s.kind !== 'co-entry') return;
+  s.err = '';
+  const T = CO_TYPES[s.type];
+  let amount = parseAmount($('#g-amount').value);
+  const date = $('#g-date').value || todayISO();
+  const due = T.inv ? ($('#g-due').value || null) : null;
+  if (!(amount > 0)) { s.err = 'اكتب المبلغ.'; coFormSync(); $('#g-amount').focus(); return; }
+  amount = s.cur === 'IQD' ? Math.round(amount) : r2(amount);
+  if (due && due < date) { s.err = 'موعد التسديد لازم يكون بعد تاريخ القائمة.'; coFormSync(); return; }
+  const note = $('#g-note').value.trim(), invNo = T.inv ? $('#g-inv').value.trim() : '';
+  if (s.edit) {
+    const fresh = ent(s.edit.id) || s.edit;
+    const changed = editEntry(fresh, {amount, cur: s.cur, note, date, due, invNo});
+    closeSheet(); render();
+    toast(changed ? 'انحفظ التعديل، وانكتب بالسجل' : 'ماكو تغيير');
+    return;
+  }
+  const before = coBal(s.coid)[s.cur];
+  const e = addCoEntry({coid: s.coid, type: s.type, amount, cur: s.cur, note, invNo, date, due});
+  closeSheet(); render();
+  toast(e.status === 'approved' ? `انحفظت. ${coRunText(r2(before + coEffect(e)), s.cur)}` : `انرسلت إلى ${ownerName()} حتى يوافق عليها`);
+}
+function openCoForm(id, presetName){
+  const c = id ? co(id) : null, u = me();
+  sheetState = {kind: 'co', id: id || null, openCur: 'IQD', openDir: 0, dupOk: false};
+  const opening = c ? '' : `<div class="field"><label for="k-open">الرصيد السابق (اختياري)</label>
+      <div class="seg dir" role="group" aria-label="منو يطلب منو"><button type="button" data-act="k-dir" data-v="-1" aria-pressed="false">يطلبونا</button><button type="button" data-act="k-dir" data-v="1" aria-pressed="false">نطلبهم</button></div>
+      <div class="amount-row"><input class="input amount" id="k-open" inputmode="decimal" dir="ltr" autocomplete="off" placeholder="0" style="font-size:22px">
+      <div class="seg cur" role="group" aria-label="عملة الرصيد السابق"><button type="button" data-act="k-cur" data-v="IQD" aria-pressed="true">د.ع</button><button type="button" data-act="k-cur" data-v="USD" aria-pressed="false">$</button></div></div>
+      <span class="note">${ic('info')}<span>ينسجل كحركة وحدة باسم «رصيد سابق»${u.role === 'owner' ? '' : `، وتنتظر موافقة ${esc(ownerName())}`}.</span></span></div>`;
+  openSheet(`${sheetHead(c ? 'تعديل الشركة' : 'شركة جديدة', c ? esc(c.name) : '')}
+    <form class="sheet-body" id="co-form" novalidate>
+      <div class="field"><label for="k-name">اسم الشركة</label><input class="input" id="k-name" autocomplete="off" placeholder="مثلاً: شركة الريم" value="${esc(c ? c.name : (presetName || ''))}"></div>
+      <div class="two"><div class="field"><label for="k-phone">الرقم</label><input class="input" id="k-phone" dir="ltr" inputmode="tel" placeholder="07XX XXX XXXX" value="${esc(c ? c.phone : '')}"></div>
+        <div class="field"><label for="k-note">ملاحظة</label><input class="input" id="k-note" autocomplete="off" placeholder="مثلاً: اسم المندوب" value="${esc(c ? c.note : '')}"></div></div>
+      ${opening}<div id="k-warn"></div>
+    </form>
+    <div class="sheet-foot"><button class="btn btn-primary grow" data-act="k-save">${c ? 'حفظ' : 'إضافة'}</button></div>`,
+    () => { if (!c) $('#k-name').focus({preventScroll: true}); });
+}
+function saveCoForm(){
+  const s = sheetState, u = me();
+  const name = $('#k-name').value.trim().replace(/\s+/g, ' ');
+  const warn = msg => { $('#k-warn').innerHTML = `<div class="warnbox">${ic('alert')}<span>${msg}</span></div>`; };
+  if (!name) { warn('اكتب اسم الشركة.'); $('#k-name').focus(); return; }
+  const patch = {name, phone: $('#k-phone').value.trim(), note: $('#k-note').value.trim()};
+  if (s.id) { const ch = editCompany(s.id, patch); closeSheet(); render(); toast(ch ? 'انحفظت بيانات الشركة' : 'ماكو تغيير'); return; }
+  let open = parseAmount($('#k-open').value);
+  open = open > 0 ? (s.openCur === 'IQD' ? Math.round(open) : r2(open)) : 0;
+  if (open && !s.openDir) { warn('اختار الرصيد السابق: يطلبونا لو نطلبهم.'); return; }
+  const dup = st.companies.find(x => norm(x.name) === norm(name));
+  if (dup && !s.dupOk) { s.dupOk = true; warn(`اكو شركة بنفس الاسم (${esc(dup.name)}). إذا هاي شركة ثانية، اضغط «إضافة» مرة ثانية.`); return; }
+  const c = addCompany(patch, open ? {amount: open, cur: s.openCur, dir: s.openDir} : null);
+  closeSheet(); ui.coQ = '';
+  go({view: {type: 'company', id: c.id}});
+  toast(open && u.role !== 'owner' ? `انضافت الشركة، والرصيد السابق ينتظر موافقة ${ownerName()}` : 'انضافت الشركة');
 }
 function permRows(u){
   return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
@@ -1633,7 +2042,23 @@ let ownSub = null, dataSubs = [], viewSubs = [], viewKeyActive = '';
 function ents(snap){ const out = []; snap.forEach(d => { const e = Object.assign({id: d.id}, d.data()); st.cache.set(e.id, e); out.push(e); }); return out; }
 function onSubErr(err){ console.warn(err); if (err && err.code === 'permission-denied') toast('ما عندك صلاحية تشوف هالبيانات'); }
 function stopView(){ viewSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); viewKeyActive = ''; }
-function stopData(){ dataSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); stopView(); st.custReady = false; }
+function stopData(){ dataSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); stopView(); stopCo(); st.custReady = false; }
+// Companies are read only by the owner and staff with «الشركات», so their listeners follow that permission while
+// the app is open. permission-denied here means the database rules for companies are not published yet.
+let coSubs = [];
+function coSubErr(err){ console.warn(err); if (err && err.code === 'permission-denied') { st.coBlocked = true; render(); } }
+function stopCo(){ coSubs.splice(0).forEach(f => { try { f(); } catch (err) {} }); st.coReady = false; st.companies = []; st.coById = {}; st.coPending = []; }
+function syncCoData(){
+  const want = st.phase === 'app' && !!me() && can.companies(me());
+  if (want && !coSubs.length) {
+    st.coBlocked = false;
+    coSubs.push(onSnapshot(col('companies'), snap => {
+      const L = []; snap.forEach(d => L.push(Object.assign({id: d.id}, d.data())));
+      st.coById = Object.fromEntries(L.map(c => [c.id, c])); st.companies = L.sort(nameOrder); st.coReady = true; render();
+    }, coSubErr));
+    coSubs.push(onSnapshot(query(col('centries'), where('status', '==', 'pending')), snap => { st.coPending = ents(snap); render(); }, coSubErr));
+  } else if (!want && coSubs.length) stopCo();
+}
 function startData(){
   stopData();
   dataSubs.push(onSnapshot(col('users'), snap => {
@@ -1647,6 +2072,7 @@ function startData(){
     st.custById = Object.fromEntries(L.map(c => [c.id, c])); st.customers = L.filter(c => !c.archived).sort(nameOrder); st.custReady = true; render();
   }, onSubErr));
   dataSubs.push(onSnapshot(query(col('entries'), where('status', '==', 'pending')), snap => { st.pending = ents(snap); render(); }, onSubErr));
+  syncCoData();
 }
 function subKey(){
   if (ui.view) return `${ui.view.type}:${ui.view.id || ''}`;
@@ -1666,6 +2092,14 @@ function syncView(){
       if (m.role === 'owner' && !snap.metadata.fromCache && !snap.metadata.hasPendingWrites) healWith(cid, st.custEntries.list);
       render();
     }, onSubErr));
+  } else if (ui.view && ui.view.type === 'company') {
+    const id = ui.view.id;
+    st.coEntries = {coid: id, list: [], loaded: false};
+    viewSubs.push(onSnapshot(query(col('centries'), where('coid', '==', id)), snap => {
+      st.coEntries = {coid: id, list: ents(snap), loaded: true};
+      if (m.role === 'owner' && !snap.metadata.fromCache && !snap.metadata.hasPendingWrites) coHealWith(id, st.coEntries.list);
+      render();
+    }, coSubErr));
   } else if (ui.view && ui.view.type === 'log') {
     st.logList = null;
     viewSubs.push(onSnapshot(query(col('log'), orderBy('at', 'desc'), limit(150)), snap => {
@@ -1674,6 +2108,11 @@ function syncView(){
   } else if (!ui.view && ui.tab === 'requests') {
     viewSubs.push(onSnapshot(query(col('entries'), where('by', '==', m.id), where('status', '==', 'pending')), snap => { st.myPending = ents(snap); render(); }, onSubErr));
     viewSubs.push(onSnapshot(query(col('entries'), where('by', '==', m.id), where('status', '==', 'rejected')), snap => { st.myRejected = ents(snap).sort((a, b) => b.at - a.at).slice(0, 40); render(); }, onSubErr));
+    st.myCoPending = []; st.myCoRejected = [];
+    if (can.companies(m)) {
+      viewSubs.push(onSnapshot(query(col('centries'), where('by', '==', m.id), where('status', '==', 'pending')), snap => { st.myCoPending = ents(snap); render(); }, coSubErr));
+      viewSubs.push(onSnapshot(query(col('centries'), where('by', '==', m.id), where('status', '==', 'rejected')), snap => { st.myCoRejected = ents(snap).sort((a, b) => b.at - a.at).slice(0, 40); render(); }, coSubErr));
+    }
   } else if (!ui.view && ui.tab === 'reports') {
     if (ui.reportTab === 'today') {
       st.today = null;
@@ -1715,7 +2154,7 @@ onAuthStateChanged(auth, u => {
       st.phase = 'app'; startData();
       // ask the browser not to clear this app's saved data (the sign-in and the offline copy) when space runs low
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (err) {}
-    }
+    } else syncCoData();
     render();
   }, err => {
     st.phase = err && err.code === 'permission-denied' ? 'rules' : 'error';
@@ -1776,19 +2215,20 @@ const A = {
   'edit-cust'(d){ openCustomerForm(d.id); },
   'new-entry'(d){ openEntryForm({cid: ui.view.id, type: d.type}); },
   'open-entry'(d){ openEntryDetail(d.id); },
-  'edit-entry'(d){ const e = ent(d.id); if (e) openEntryForm({cid: e.cid, edit: e}); },
+  'edit-entry'(d){ const e = ent(d.id); if (!e) return; if (e.coid) openCoEntryForm({coid: e.coid, edit: e}); else openEntryForm({cid: e.cid, edit: e}); },
   'resend'(d){ const e = ent(d.id); if (!e) return; const [t, m] = messageFor(e, bal(e.cid)); openMessage(t, e.cid, m); },
   'del-entry'(d){ openDelete(d.id); },
   'confirm-del'(d){ const e = ent(d.id); if (!e) return; const del = deleteEntry(e); closeSheet(); render(); toast('انحذفت، وبقت بالسجل', {act: 'undo', id: e.id, label: 'تراجع'}); st.lastDeleted = del; },
   'undo'(){ if (st.lastDeleted) { restoreEntry(st.lastDeleted); st.lastDeleted = null; } $('#toast-root').innerHTML = ''; },
   async 'restore'(d){
     let e = ent(d.id);
-    if (!e) { try { const s = await getDoc(ref('entries', d.id)); if (s.exists()) { e = Object.assign({id: s.id}, s.data()); st.cache.set(e.id, e); } } catch (err) { toastErr(err); return; } }
+    if (!e) { try { const s = await getDoc(ref(d.co ? 'centries' : 'entries', d.id)); if (s.exists()) { e = Object.assign({id: s.id}, s.data()); st.cache.set(e.id, e); } } catch (err) { toastErr(err); return; } }
     if (e && e.status === 'deleted') { restoreEntry(e); closeSheet(); toast('رجعت الحركة للحساب'); }
     else toast('هاي الحركة راجعة بالحساب أصلاً');
   },
   'approve'(d){
     const e = ent(d.id); if (!e || e.status !== 'pending') return;
+    if (e.coid) { approveEntry(e); closeSheet(); render(); toast('انقبلت وانحسبت على الشركة'); return; }
     const before = bal(e.cid);
     const ne = approveEntry(e);
     render();
@@ -1796,7 +2236,7 @@ const A = {
   },
   'reject'(d){ openReject(d.id); },
   'reason'(d){ const t = $('#r-reason'); t.value = d.v; t.focus(); },
-  'do-reject'(d){ const e = ent(d.id); if (!e) return; rejectEntry(e, $('#r-reason').value.trim()); closeSheet(); render(); toast('انرفضت، وما انحسبت على الزبون'); },
+  'do-reject'(d){ const e = ent(d.id); if (!e) return; rejectEntry(e, $('#r-reason').value.trim()); closeSheet(); render(); toast(`انرفضت، وما انحسبت على ${e.coid ? 'الشركة' : 'الزبون'}`); },
   'remind'(){ openMessage('تذكير بالدين', ui.view.id, msgRemind(ui.view.id)); },
   'send-statement'(){ openMessage('كشف الحساب', ui.view.id, msgStatement(ui.view.id)); },
   'copy'(d){ copyText(d.text, 'انتسخ'); },
@@ -1818,6 +2258,18 @@ const A = {
   'f-save'(){ saveEntryForm(); },
   'c-cur'(d){ sheetState.openCur = d.v; document.querySelectorAll('[data-act="c-cur"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v))); formatAmountInput($('#c-open'), d.v); },
   'c-save'(){ saveCustomerForm(); },
+  'co-filter'(d){ ui.coFilter = d.f; const c = $('#co-chips'); if (c) c.innerHTML = coChipsHTML(); $('#co-list').innerHTML = coListHTML(); },
+  'open-co'(d){ go({view: {type: 'company', id: d.id}}); },
+  'add-co'(d){ if (can.companies(me())) openCoForm(null, d.name); },
+  'edit-co'(d){ if (can.editCo(me())) openCoForm(d.id); },
+  'new-co-entry'(d){ openCoEntryForm({coid: ui.view.id, type: d.type}); },
+  'g-type'(d){ const s = sheetState; s.type = d.v; if (!CO_TYPES[d.v].inv) s.due = null; else if (!s.due) s.due = addDays($('#g-date').value || todayISO(), 30); $('#g-due').value = s.due || ''; s.err = ''; coFormSync(); },
+  'g-cur'(d){ sheetState.cur = d.v; formatAmountInput($('#g-amount'), d.v); coFormSync(); },
+  'g-due'(d){ const n = Number(d.d); sheetState.due = n ? addDays($('#g-date').value || todayISO(), n) : null; $('#g-due').value = sheetState.due || ''; coFormSync(); },
+  'g-save'(){ saveCoEntryForm(); },
+  'k-dir'(d){ sheetState.openDir = Number(d.v); document.querySelectorAll('[data-act="k-dir"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v))); },
+  'k-cur'(d){ sheetState.openCur = d.v; document.querySelectorAll('[data-act="k-cur"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v))); formatAmountInput($('#k-open'), d.v); },
+  'k-save'(){ saveCoForm(); },
   'activate'(d){
     const u = userById(d.id); if (!u) return;
     const code = st.shop.nextCode || 2, b = writeBatch(fs);
@@ -1884,6 +2336,9 @@ document.addEventListener('click', ev => {
 document.addEventListener('input', ev => {
   const t = ev.target;
   if (t.id === 'q') { ui.q = t.value; $('#cust-list').innerHTML = custListHTML(); return; }
+  if (t.id === 'co-q') { ui.coQ = t.value; $('#co-list').innerHTML = coListHTML(); return; }
+  if (t.id === 'g-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; coFormSync(); return; }
+  if (t.id === 'k-open') { formatAmountInput(t, sheetState.openCur); return; }
   if (t.id === 'f-amount') { formatAmountInput(t, sheetState.cur); sheetState.err = ''; formSync(); return; }
   if (t.dataset && t.dataset.money) { formatAmountInput(t, t.dataset.money); return; }
   if (t.id === 'c-open') { formatAmountInput(t, sheetState.openCur); return; }
@@ -1897,6 +2352,8 @@ document.addEventListener('change', ev => {
   if (t.id === 'ph-file') { const f = t.files && t.files[0]; t.value = ''; readPhonesFile(f); return; }
   if (t.id === 'f-due') { sheetState.due = t.value || null; formSync(); return; }
   if (t.id === 'f-date') formSync();
+  if (t.id === 'g-due') { sheetState.due = t.value || null; coFormSync(); return; }
+  if (t.id === 'g-date') coFormSync();
 });
 document.addEventListener('submit', ev => {
   ev.preventDefault();
@@ -1904,6 +2361,8 @@ document.addEventListener('submit', ev => {
   if (id === 'auth-form') doAuth();
   else if (id === 'entry-form') saveEntryForm();
   else if (id === 'cust-form') saveCustomerForm();
+  else if (id === 'co-entry-form') saveCoEntryForm();
+  else if (id === 'co-form') saveCoForm();
   else if (id === 'reject-form') A['do-reject']({id: sheetState.id});
   else if (id === 'settings-form') {
     const name = $('#s-name').value.trim() || SHOP_DEFAULT.name, phone = $('#s-phone').value.trim();

@@ -219,6 +219,18 @@ button{-webkit-tap-highlight-color:transparent}
 .seg button[aria-pressed="true"]{background:var(--sheet);color:var(--ink);box-shadow:var(--shadow)}
 .seg.type button[data-v="debt"][aria-pressed="true"]{color:var(--debt)}
 .seg.type button[data-v="pay"][aria-pressed="true"]{color:var(--pay)}
+/* companies: four kinds of entry in two rows, invoices in red and payments in green, like debts and payments */
+.seg.quad{grid-auto-flow:row;grid-template-columns:1fr 1fr}
+.seg.quad button.inv[aria-pressed="true"]{color:var(--debt)}
+.seg.quad button.pay[aria-pressed="true"]{color:var(--pay)}
+.seg.dir button[data-v="1"][aria-pressed="true"]{color:var(--debt)}
+.seg.dir button[data-v="-1"][aria-pressed="true"]{color:var(--pay)}
+.actions.quad{display:grid;grid-template-columns:1fr 1fr}
+.actions.quad .btn{min-width:0;padding-inline:10px}
+.dline{display:inline-flex;align-items:baseline;gap:6px}
+.dlbl{font-family:var(--font-body);font-size:11.5px;font-weight:600;color:var(--muted)}
+.bal-lines .dlbl{font-size:14px}
+.total .val.cred{color:var(--pay)}
 .cash{background:var(--ink);color:var(--sheet);border-radius:var(--r-lg);padding:16px;display:flex;flex-direction:column;gap:6px}
 .cash .k{font-size:13px;opacity:.75}
 .cash .v{display:flex;flex-direction:column;font-family:var(--font-display);font-size:27px;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums}
