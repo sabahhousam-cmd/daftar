@@ -22,17 +22,21 @@ const fs = initializeFirestore(fbApp, {localCache: persistentLocalCache({tabMana
 /* ---------- constants ---------- */
 const ROLES = {owner: 'المدير', supervisor: 'مشرف', staff: 'موظف'};
 const PERMS = [
-  {k: 'balances', l: 'يشوف كل الأرصدة والمجاميع', s: 'بدونها يشوف رصيد الزبون اللي يفتحه بس.'},
+  {k: 'balances', l: 'يشوف أرصدة كل الزبائن', s: 'رصيد كل زبون بالقائمة. بدونها يشوف رصيد الزبون اللي يفتحه بس.'},
+  {k: 'totals', l: 'يشوف مجموع الديون', s: 'المطلوب بالدينار والدولار من كل الزبائن، فوك القائمة.'},
   {k: 'reports', l: 'التقارير وتنزيل الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
   {k: 'edit', l: 'يعدّل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، وكل تعديل ينكتب بالسجل.'},
   {k: 'customers', l: 'يعدّل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
   {k: 'messages', l: 'يرسل رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. الرسالة تطلع من واتساب موبايله.'}
 ];
-const PERM_SHORT = {balances: 'الأرصدة', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
+const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
 const PRESETS = {
-  supervisor: {balances: true, reports: true, edit: true, customers: true, messages: false},
-  staff: {balances: false, reports: false, edit: false, customers: false, messages: false}
+  supervisor: {balances: true, totals: false, reports: true, edit: true, customers: true, messages: false},
+  staff: {balances: false, totals: false, reports: false, edit: false, customers: false, messages: false}
 };
+// the database rules take a new staff account only with exactly these five, all off; «totals» came later and
+// a missing permission counts as off
+const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
 const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'سقف الدين للزبائن', 'تفعيل الموظفين وصلاحياتهم وشيل حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
 const CUR_WORD = {IQD: 'دينار', USD: 'دولار'};
@@ -159,6 +163,7 @@ const ent = id => st.cache.get(id);
 const has = (u, k) => !!u && (u.role === 'owner' || !!(u.perms && u.perms[k]));
 const can = {
   seeBalances: u => has(u, 'balances'),
+  seeTotals: u => has(u, 'totals'),
   reports: u => has(u, 'reports'),
   approve: u => !!u && u.role === 'owner',
   editEntry: (u, e) => e.status !== 'deleted' && e.status !== 'rejected' && (u.role === 'owner' || (has(u, 'edit') && e.status === 'pending')),
@@ -627,7 +632,7 @@ function customersScreen(){
   if (u.role === 'owner' && st.custReady && st.customers.length && Date.now() - (st.shop.lastBackupAt || 0) > 7 * 864e5) {
     h += `<div class="backup">${ic('download')}<span class="txt"><b>${st.shop.lastBackupAt ? `آخر نسخة احتياطية ${relDay(isoOf(new Date(st.shop.lastBackupAt)))}` : 'بعدك ما نزّلت نسخة احتياطية'}</b><small>نزّل نسخة إكسل وخزنها بإيميلك. ياخذ ثواني.</small></span><button class="btn btn-ghost" data-act="export">نزّل هسه</button></div>`;
   }
-  if (showBal && st.custReady) {
+  if (can.seeTotals(u) && st.custReady) {
     const t = totals();
     h += `<section class="totals" aria-label="المطلوب من الزبائن">
       <div class="total"><span class="lbl">المطلوب بالدينار</span><span class="val">${fmtNum(t.IQD, 'IQD')}<small>د.ع</small></span></div>
@@ -1689,7 +1694,7 @@ async function ensureUserDoc(u){
       const shop = await getDoc(ref('meta', 'shop')).catch(() => null);
       if (shop && !shop.exists()) await setDoc(ref('meta', 'shop'), Object.assign({}, SHOP_DEFAULT));
     } else {
-      await setDoc(ref('users', u.uid), {name, email: u.email, role: 'staff', active: false, perms: Object.assign({}, PRESETS.staff), code: 0, seq: 0, createdAt: Date.now()});
+      await setDoc(ref('users', u.uid), {name, email: u.email, role: 'staff', active: false, perms: Object.assign({}, SIGNUP_PERMS), code: 0, seq: 0, createdAt: Date.now()});
     }
   } catch (err) {
     st.phase = err && err.code === 'permission-denied' ? 'rules' : 'error';

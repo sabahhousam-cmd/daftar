@@ -1,5 +1,5 @@
 /* Offline shell for دفتر الديون. Firebase data traffic is never touched here; Firestore keeps its own offline copy. */
-const VERSION = 'daftar-v13';
+const VERSION = 'daftar-v14';
 const RUNTIME = 'daftar-runtime-v1';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-256.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/wordmark.png'];
 // The app cannot start without these, so they are saved on the first visit, not the second.
