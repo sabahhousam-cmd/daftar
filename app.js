@@ -1878,9 +1878,13 @@ function openAdjust(cid){
       <div id="a-warn" class="stack" style="gap:8px" aria-live="polite"></div>
       <p class="note">${ic('info')}<span>لن تُرسل رسالة إلى الزبون، ولا تدخل التسوية في تقارير اليوم والشهر.</span></p>
     </form>
-    <div class="sheet-foot"><button class="btn btn-primary grow" data-act="a-save">حفظ الرصيد</button></div>`,
+    <div class="sheet-foot"><button class="btn btn-primary grow" id="a-go" data-act="a-save">حفظ الرصيد</button></div>`,
     () => { adjustFill(); const a = $('#a-amount'); a.focus({preventScroll: true}); a.select(); });
 }
+// Entries waiting for approval would land on top of a balance typed with or without them in mind, and approving them
+// later would count them twice or not at all, so the balance is set only once nothing of this customer is waiting.
+const adjWaiting = s => pend(s.cid, custList(s.cid)).n;
+const ADJ_WAIT = 'لهذا الزبون حركات بانتظار موافقتك. وافق عليها أو ارفضها أولاً، ثم عدّل الرصيد.';
 // the field starts at the current balance of the chosen currency, ready to be typed over
 function adjustFill(){
   const s = sheetState; if (!s || s.kind !== 'adjust') return;
@@ -1894,15 +1898,17 @@ function adjustSync(){
   const now = bal(s.cid)[s.cur], v = parseAmount($('#a-amount').value), target = adjTarget(v, s.cur);
   $('#a-hint').textContent = v > 0 ? amountWords(v, s.cur) : '';
   $('#a-now').innerHTML = `<div class="kv"><span>الرصيد الحالي</span><b>${now ? balText(now, s.cur) : 'مسدد'}</b></div>`;
-  const out = [];
+  const out = [], waiting = adjWaiting(s), go = $('#a-go');
+  if (go) go.disabled = !!waiting;
+  if (waiting) { $('#a-warn').innerHTML = `<div class="warnbox">${ic('alert')}<span>${ADJ_WAIT}</span></div>`; return; }
   if (s.err) out.push(`<div class="warnbox">${ic('alert')}<span>${s.err}</span></div>`);
   const d = target === null ? 0 : r2(target - now);
   if (d) out.push(`<p class="note">${ic('doc')}<span>سيُسجَّل في كشف الحساب: ${adjLabel(d > 0 ? 'debt' : 'pay')} بمبلغ ${amtText(Math.abs(d), s.cur)}.</span></p>`);
-  if (pend(s.cid, custList(s.cid)).n) out.push(`<div class="warnbox soft">${ic('clock')}<span>لهذا الزبون حركات بانتظار موافقتك، وهي غير داخلة في الرصيد الحالي.</span></div>`);
   $('#a-warn').innerHTML = out.join('');
 }
 function saveAdjust(){
   const s = sheetState; if (!s || s.kind !== 'adjust') return;
+  if (adjWaiting(s)) { adjustSync(); return; }
   const target = adjTarget(parseAmount($('#a-amount').value), s.cur);
   const fail = msg => { s.err = msg; adjustSync(); $('#a-amount').focus(); };
   if (target === null) { fail('أدخل الرصيد الصحيح.'); return; }
