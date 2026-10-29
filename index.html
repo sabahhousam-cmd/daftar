@@ -270,6 +270,7 @@ button{-webkit-tap-highlight-color:transparent}
 .ev-ic.approve{background:var(--pay-soft);color:var(--pay);border-color:transparent}
 .ev-ic.reject,.ev-ic.delete,.ev-ic.reset,.ev-ic.user_removed,.ev-ic.customer_remove,.ev-ic.co_remove,.ev-ic.pv_remove{background:var(--debt-soft);color:var(--debt);border-color:transparent}
 .ev-ic.create,.ev-ic.adjust{background:var(--wait-soft);color:var(--wait);border-color:transparent}
+.ev-ic.notify_on{background:var(--pay-soft);color:var(--pay);border-color:transparent}
 .ev-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .ev-body p{margin:0;font-size:14px;line-height:1.5}
 .ev-body small{font-size:12px;color:var(--muted)}
@@ -301,6 +302,9 @@ button{-webkit-tap-highlight-color:transparent}
 .switch::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:22px;height:22px;border-radius:50%;background:var(--sheet);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:inset-inline-start .15s}
 .switch[aria-checked="true"]{background:var(--pay)}
 .switch[aria-checked="true"]::after{inset-inline-start:23px}
+.switch:disabled{opacity:.45;cursor:default}
+.switch[aria-busy="true"]{opacity:.6;pointer-events:none;animation:busy 1s ease-in-out infinite alternate}
+@keyframes busy{to{opacity:.3}}
 .perm .kv{font-size:13.5px}
 .perm .kv:first-child{border-top:0}
 .linkbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:10px 12px;font-size:13.5px}
@@ -355,7 +359,7 @@ body:has(.fab):not(:has(#sheet-root .sheet)) .toast{bottom:calc(140px + env(safe
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @keyframes rise{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion: reduce){.scrim,.sheet,.toast{animation:none}.switch,.switch::after{transition:none}.spin{animation-duration:2.4s}}
+@media (prefers-reduced-motion: reduce){.scrim,.sheet,.toast{animation:none}.switch,.switch::after{transition:none;animation:none}.spin{animation-duration:2.4s}}
 .lock{overflow:hidden}
 </style>
 </head>

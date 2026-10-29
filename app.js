@@ -29,15 +29,16 @@ const PERMS = [
   {k: 'reports', l: 'التقارير وتنزيل ملف الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
   {k: 'edit', l: 'تعديل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، ويُسجَّل كل تعديل في السجل.'},
   {k: 'customers', l: 'تعديل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
-  {k: 'messages', l: 'إرسال رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. تُرسل الرسالة من واتساب هاتفه.'}
+  {k: 'messages', l: 'إرسال رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. تُرسل الرسالة من واتساب هاتفه.'},
+  {k: 'notify', l: 'إشعارات الديون والتسديدات', s: 'إشعار على هاتفه بكل دين أو تسديد للزبائن بعد موافقتك. يفعّلها من اسمه أعلى التطبيق.'}
 ];
-const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', private: 'الديون الخاصة', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب'};
+const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', private: 'الديون الخاصة', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب', notify: 'الإشعارات'};
 const PRESETS = {
-  supervisor: {balances: true, totals: false, companies: false, private: false, reports: true, edit: true, customers: true, messages: false},
-  staff: {balances: false, totals: false, companies: false, private: false, reports: false, edit: false, customers: false, messages: false}
+  supervisor: {balances: true, totals: false, companies: false, private: false, reports: true, edit: true, customers: true, messages: false, notify: false},
+  staff: {balances: false, totals: false, companies: false, private: false, reports: false, edit: false, customers: false, messages: false, notify: false}
 };
-// the database rules take a new staff account only with exactly these five, all off; «totals» and «companies»
-// came later and a missing permission counts as off
+// the database rules take a new staff account only with exactly these five, all off; «totals», «companies»,
+// «private» and «notify» came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
 const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'تعديل الأرصدة وحذف الزبائن والشركات والحسابات الخاصة', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
@@ -405,6 +406,28 @@ const KIND = {
   pv: {col: 'pentries', parent: 'privates', key: 'pid', effect: e => bEffect(e), heal: id => bRecompute(BOOK.pv, id)}
 };
 const kindOf = e => { const B = bookOf(e); return B ? KIND[B.id] : KIND.cust; };
+// A log line that also carries nt (the time the database saved it) and nx is a phone notification: the owner's Google
+// Apps Script reads such lines every minute and sends nx to the phones concerned (see «phone notifications» below).
+// wait: a request from the staff, to the owner; ok: a customer's debt or payment counted, to the staff with «الإشعارات»
+// (bb, with the balance, to those who may see balances). The texts are written here, as the app words everything else.
+const pushMark = nx => ({nt: serverTimestamp(), nx});
+function pushWait(e, name){
+  const B = bookOf(e), who = me().name, a = amtText(e.amount, e.cur);
+  name = name || partyName(e);
+  let b;
+  if (!B) b = e.opening ? `${who} أضاف ${name} إلى الزبائن برصيد سابق ${a}` : e.type === 'debt' ? `${who} سجّل دين ${a} على ${name}` : `${who} سجّل تسديد ${a} من ${name}`;
+  else {
+    const T = B.types[e.type];
+    b = e.opening ? `${who} أضاف ${name} إلى ${B.id === 'co' ? 'الشركات' : 'الديون الخاصة'} برصيد سابق ${a} ${T.sign > 0 ? B.t.in : B.t.out}`
+      : `${who} سجّل ${T.l} ${a} ${T.sign > 0 ? 'إلى' : 'من'} ${name}`;
+  }
+  return pushMark({k: 'wait', t: 'طلب بانتظار موافقتك', b, go: 'approvals', tag: `w-${e.id}`});
+}
+function pushOk(e, after){
+  const c = (cust(e.cid) || {}).name || '', pay = e.type === 'pay', v = after[e.cur], b = `${amtText(e.amount, e.cur)}، سجّله ${uname(e.by)}`;
+  const left = v > 0 ? `${pay ? 'المتبقي' : 'الرصيد'} ${amtText(v, e.cur)}` : v < 0 ? `الرصيد: له ${amtText(-v, e.cur)}` : 'الحساب مسدّد بالكامل';
+  return pushMark({k: 'ok', t: pay ? `تسديد من ${c}` : `دين على ${c}`, b, bb: `${b}. ${left}`, go: 'customer', id: e.cid, tag: `k-${e.id}`});
+}
 function nextReceipt(){ const m = me(); const seq = (m.seq || 0) + 1; return {seq, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`}; }
 function addEntry(o){
   const m = me(), now = Date.now(), isOwner = m.role === 'owner';
@@ -420,7 +443,10 @@ function addEntry(o){
   b.set(r, e);
   b.update(ref('users', m.id), {seq});
   if (isOwner) b.update(ref('customers', o.cid), {[`bal.${o.cur}`]: increment(effect(e)), lastAt: now});
-  b.set(doc(col('log')), o.adjust ? logOf('adjust', full, {from: o.from, to: o.to, note: e.note}) : logOf('create', full, o.cname ? {cname: o.cname} : null));
+  const log = o.adjust ? logOf('adjust', full, {from: o.from, to: o.to, note: e.note}) : logOf('create', full, o.cname ? {cname: o.cname} : null);
+  if (!isOwner) Object.assign(log, pushWait(full, o.cname));
+  else if (!o.adjust && !o.opening) Object.assign(log, pushOk(full, withEffect(bal(o.cid), full)));
+  b.set(doc(col('log')), log);
   st.me = Object.assign({}, m, {seq});
   commit(b, isOwner ? () => recompute(o.cid) : null);
   return full;
@@ -429,7 +455,9 @@ function approveEntry(e){
   const K = kindOf(e), pid = e[K.key], m = me(), now = Date.now(), b = writeBatch(fs);
   b.update(ref(K.col, e.id), {status: 'approved', approvedBy: m.id, approvedAt: now});
   b.update(ref(K.parent, pid), {[`bal.${e.cur}`]: increment(K.effect(e)), lastAt: now});
-  b.set(doc(col('log')), logOf('approve', e));
+  const log = logOf('approve', e);
+  if (K === KIND.cust && !e.opening && !e.adjust) Object.assign(log, pushOk(e, withEffect(bal(pid), e)));
+  b.set(doc(col('log')), log);
   commit(b, () => K.heal(pid));
   return Object.assign({}, e, {status: 'approved', approvedBy: m.id, approvedAt: now});
 }
@@ -494,7 +522,7 @@ function addCustomer(o, open){
     b.set(er, e);
     b.update(ref('users', m.id), {seq});
     st.me = Object.assign({}, m, {seq});
-    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {cname: c.name}));
+    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {cname: c.name}, isOwner ? null : pushWait(Object.assign({id: er.id}, e), c.name)));
   }
   commit(b);
   // show the new customer right away; the live snapshot replaces this copy
@@ -541,7 +569,7 @@ function addBookEntry(B, o){
   b.set(r, e);
   b.update(ref('users', m.id), {seq});
   if (isOwner) b.update(ref(B.col, o.id), {[`bal.${o.cur}`]: increment(bEffect(e)), lastAt: now});
-  b.set(doc(col('log')), logOf('create', full));
+  b.set(doc(col('log')), Object.assign(logOf('create', full), isOwner ? null : pushWait(full)));
   st.me = Object.assign({}, m, {seq});
   commit(b, isOwner ? () => bRecompute(B, o.id) : null);
   return full;
@@ -565,7 +593,7 @@ function addParty(B, o, open){
     b.set(er, e);
     b.update(ref('users', m.id), {seq});
     st.me = Object.assign({}, m, {seq});
-    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {[B.nameKey]: c.name}));
+    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {[B.nameKey]: c.name}, isOwner ? null : pushWait(Object.assign({id: er.id}, e), c.name)));
   }
   commit(b);
   // show the new account right away; the live snapshot replaces this copy
@@ -1655,13 +1683,15 @@ function logText(ev){
     case 'user_removed': return `${who} أزال حساب ${esc(ev.name)}`;
     case 'user_restored': return `${who} استعاد حساب ${esc(ev.name)}`;
     case 'settings': return `${who} عدّل إعدادات المحل`;
+    case 'notify_on': return `${who} فعّل الإشعارات على جهازه${ev.label ? ` (${esc(ev.label)})` : ''}`;
+    case 'notify_off': return `${who} أوقف الإشعارات على جهازه${ev.label ? ` (${esc(ev.label)})` : ''}`;
     case 'import': return `${who} استورد ${countAr(ev.count || 0, 'زبوناً واحداً', 'زبونين', 'زبائن', 'زبوناً')} مع الأرصدة من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
     case 'phones': return `${who} حفظ أرقام هواتف ${countAr(ev.count || 0, 'زبون واحد', 'زبونين', 'زبائن', 'زبوناً')} من ملف إكسل${ev.file ? ` <span dir="auto">(${esc(ev.file)})</span>` : ''}`;
     case 'reset': return `${who} صفّر الدفتر وأزال ${countAr(ev.customers || 0, 'زبوناً واحداً', 'زبونين', 'زبائن', 'زبوناً')} و${countAr(ev.entries || 0, 'حركة واحدة', 'حركتين', 'حركات', 'حركة')}`;
   }
   return '';
 }
-const EV_IC = {adjust: 'edit', customer_remove: 'trash', customer_restore: 'undo', co_remove: 'trash', co_restore: 'undo', pv_remove: 'trash', pv_restore: 'undo', co_add: 'building', co_edit: 'edit', pv_add: 'lock', pv_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo'};
+const EV_IC = {adjust: 'edit', customer_remove: 'trash', customer_restore: 'undo', co_remove: 'trash', co_restore: 'undo', pv_remove: 'trash', pv_restore: 'undo', co_add: 'building', co_edit: 'edit', pv_add: 'lock', pv_edit: 'edit', create: 'plus', approve: 'check', reject: 'x', edit: 'edit', delete: 'trash', restore: 'undo', customer_add: 'user', customer_edit: 'edit', user_role: 'shield', user_perm: 'shield', user_active: 'shield', settings: 'store', import: 'doc', reset: 'trash', phones: 'phone', user_removed: 'trash', user_restored: 'undo', notify_on: 'bell', notify_off: 'bell'};
 function logScreen(){
   if (!st.logList) return loadingBox();
   let h = '<p class="lead">يُحفظ هنا كل ما يجري في الدفتر، ولا يمكن لأحد مسحه. ومن هنا تستعيد ما حُذف من حركات وزبائن.</p>';
@@ -2249,7 +2279,7 @@ function savePartyForm(){
   toast(open && u.role !== 'owner' ? `${B.t.added}، والرصيد السابق بانتظار موافقة ${ownerName()}` : B.t.added);
 }
 function permRows(u){
-  return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
+  return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}${p.k === 'notify' ? `<span id="u-ndev" data-uid="${u.id}"></span>` : ''}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
 }
 function openUserSheet(id){
   const u = userById(id); if (!u || u.role === 'owner') return;
@@ -2263,11 +2293,13 @@ function openUserSheet(id){
       <p class="note">${ic('shield')}<span>تبقى الموافقة والرفض والحذف من صلاحياتك وحدك.</span></p>
       <button class="btn btn-ghost danger block" data-act="rm-user" data-id="${u.id}">${ic('trash')}إزالة الحساب</button>
     </div>`);
+  paintUserDevices(u.id); loadUserDevices(u.id);
 }
 function openAccount(){
   const m = me();
   openSheet(`${sheetHead(esc(m.name), `<span dir="ltr">${esc(m.email || '')}</span>`)}
     <div class="sheet-body"><div class="kv"><span>الصلاحية</span><span class="role ${m.role}">${ROLES[m.role]}</span></div>
+      ${notifyRow()}
       ${isStandalone() ? '' : `<button class="btn btn-ghost block" data-act="install">${ic('phoneapp')}تثبيت التطبيق على الهاتف</button>`}
       <button class="btn btn-ghost danger block" data-act="logout">${ic('logout')}تسجيل الخروج</button></div>`);
 }
@@ -2280,6 +2312,146 @@ function openInstall(){
     ? '<li>افتح رابط التطبيق من Safari.</li><li>اضغط زر المشاركة (المربع الذي يحتوي على سهم للأعلى).</li><li>اختر «إضافة إلى الشاشة الرئيسية»، ثم «إضافة».</li>'
     : '<li>افتح رابط التطبيق من Chrome.</li><li>اضغط النقاط الثلاث في الأعلى.</li><li>اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».</li>';
   openSheet(`${sheetHead('تثبيت التطبيق', 'لتظهر أيقونة محمود ناجي على شاشة الهاتف')}<div class="sheet-body"><ol class="steps">${steps}</ol></div>`);
+}
+
+/* ---------- phone notifications ---------- */
+// The phones are notified through Firebase Cloud Messaging. The app has no server of its own: a Google Apps Script in
+// the owner's Google account reads, every minute, the log lines marked nt (pushMark above) and sends their nx:
+//   wait  — a request from the staff, to the owner's phones;
+//   ok    — a customer's debt or payment counted, to the staff with «الإشعارات» (never to whoever counted it);
+//   hello — the first notification of a phone just switched on, to that phone only.
+// Each phone is one devices/{uid}_{device} document: its FCM token and whether it is on. Switching off, and signing out,
+// turn it off and drop the phone's push subscription, so a phone that changes hands stops getting them at once.
+// the public half of the project's Web Push certificate (Firebase console → Project settings → Cloud Messaging)
+const VAPID_KEY = 'BEgu9-IuzMAScsz4SmdY25kI8rNCSvTy7Bj2YMdkX_hB2RqRnDn4qOS_h39ixOLrGvztl-2_dJ6o2ghLTcbx2sE';
+const NOTIFY = {on: 'daftar-notify', dev: 'daftar-device', tok: 'daftar-notify-token', at: 'daftar-notify-at', busy: false, checked: ''};
+const lsGet = k => { try { return localStorage.getItem(k); } catch (err) { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, String(v)); } catch (err) {} };
+function deviceId(){
+  let d = lsGet(NOTIFY.dev);
+  if (!d || !/^[a-z0-9]{20}$/.test(d)) { const abc = 'abcdefghijklmnopqrstuvwxyz0123456789'; d = Array.from(crypto.getRandomValues(new Uint8Array(20)), b => abc[b % 36]).join(''); lsSet(NOTIFY.dev, d); }
+  return d;
+}
+const deviceRef = () => ref('devices', `${me().id}_${deviceId()}`);
+function deviceLabel(){ const ua = navigator.userAgent; return /iphone|ipad|ipod/i.test(ua) ? 'آيفون' : /android/i.test(ua) ? 'أندرويد' : /windows/i.test(ua) ? 'كمبيوتر' : /macintosh/i.test(ua) ? 'ماك' : 'جهاز'; }
+const deviceData = (token, on) => ({uid: me().id, token: token || '', on, label: deviceLabel(), at: serverTimestamp()});
+// iPhones take notifications only in the app added to the home screen
+function notifySupport(){
+  if ('serviceWorker' in navigator && 'PushManager' in window && typeof Notification !== 'undefined') return 'ok';
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !isStandalone() ? 'ios' : 'none';
+}
+const notifyOn = () => !!me() && lsGet(NOTIFY.on) === me().id && notifySupport() === 'ok' && Notification.permission === 'granted';
+const within = (p, ms) => Promise.race([p, new Promise((res, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), {code: 'timeout'})), ms))]);
+let fcmMod = null;
+async function fcmToken(){
+  if (!VAPID_KEY) throw Object.assign(new Error('no key'), {code: 'unsupported'});
+  if (!fcmMod) fcmMod = await import('https://www.gstatic.com/firebasejs/12.19.0/firebase-messaging.js');
+  if (!(await fcmMod.isSupported())) throw Object.assign(new Error('unsupported'), {code: 'unsupported'});
+  const reg = await within(navigator.serviceWorker.ready, 10000);
+  return fcmMod.getToken(fcmMod.getMessaging(fbApp), {vapidKey: VAPID_KEY, serviceWorkerRegistration: reg});
+}
+async function dropPush(){ try { const reg = await navigator.serviceWorker.getRegistration(); const sub = reg && await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (err) {} }
+function notifyRow(){
+  const m = me(); if (!has(m, 'notify')) return '';
+  const owner = m.role === 'owner', sup = notifySupport(), title = owner ? 'إشعارات الموافقات' : 'إشعارات الديون والتسديدات';
+  let sub = owner ? 'إشعار على هذا الهاتف بكل طلب يحتاج موافقتك.' : 'إشعار على هذا الهاتف بكل دين أو تسديد للزبائن بعد اعتماده.', off = false;
+  if (sup === 'ios') { sub = 'على الآيفون، ثبّت التطبيق على الشاشة الرئيسية أولاً، ثم فعّل الإشعارات من داخله.'; off = true; }
+  else if (sup === 'none') { sub = 'هذا المتصفح لا يدعم الإشعارات.'; off = true; }
+  else if (Notification.permission === 'denied') { sub = 'الإشعارات محظورة لهذا التطبيق في المتصفح. اسمح بها من إعدادات الموقع، ثم فعّلها من هنا.'; off = true; }
+  return `<div class="list" id="notify-row"><div class="urow"><span class="main"><b>${title}</b><small>${sub}</small></span><button class="switch" role="switch" aria-checked="${!off && notifyOn()}" aria-label="${title}" data-act="notify"${off ? ' disabled' : ''}${NOTIFY.busy ? ' aria-busy="true"' : ''}></button></div></div>`;
+}
+function paintNotify(){ const el = $('#notify-row'); if (el) el.outerHTML = notifyRow(); }
+async function enableNotify(){
+  const m = me(); if (!m || NOTIFY.busy) return;
+  if (!st.online) { toast('يتطلب تفعيل الإشعارات اتصالاً بالإنترنت'); return; }
+  NOTIFY.busy = true; paintNotify();
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw Object.assign(new Error(perm), {code: perm === 'denied' ? 'denied' : 'dismissed'});
+    const token = await fcmToken();
+    if (!token) throw new Error('no token');
+    const r = deviceRef(), b = writeBatch(fs);
+    b.set(r, deviceData(token, true));
+    b.set(doc(col('log')), Object.assign(logOf('notify_on', null), {label: deviceLabel()}, pushMark({k: 'hello', t: 'تم تفعيل الإشعارات',
+      b: m.role === 'owner' ? 'ستصلك هنا الطلبات التي تحتاج موافقتك.' : 'ستصلك هنا ديون الزبائن وتسديداتهم بعد اعتمادها.', dev: r.id, tag: 'hello'})));
+    await within(b.commit(), 20000);
+    lsSet(NOTIFY.on, m.id); lsSet(NOTIFY.tok, token); lsSet(NOTIFY.at, Date.now()); NOTIFY.checked = m.id;
+    toast('تم تفعيل الإشعارات على هذا الهاتف. يصلك إشعار تجريبي خلال دقيقة');
+  } catch (err) {
+    const c = String((err && err.code) || '');
+    toast(c === 'denied' || c.includes('permission-blocked') ? 'لم يُسمح بالإشعارات. اسمح بها من إعدادات الموقع في المتصفح، ثم أعد المحاولة'
+      : c === 'dismissed' || c.includes('permission-default') ? 'لم تُفعَّل الإشعارات. اضغط مرة أخرى واختر «السماح»'
+      : c === 'unsupported' ? 'هذا المتصفح لا يدعم الإشعارات'
+      : c.includes('permission-denied') ? (m.role === 'owner' ? 'لم يتم التفعيل: تحتاج قواعد الحماية في Firebase إلى تحديث' : 'تعذّر تفعيل الإشعارات. يرجى مراجعة المدير')
+      : 'تعذّر تفعيل الإشعارات. تأكد من الاتصال بالإنترنت وحاول مرة أخرى');
+    console.warn(err);
+  } finally { NOTIFY.busy = false; paintNotify(); }
+}
+function disableNotify(){
+  const m = me(); if (!m) return;
+  const b = writeBatch(fs);
+  b.set(deviceRef(), deviceData(lsGet(NOTIFY.tok), false));
+  b.set(doc(col('log')), Object.assign(logOf('notify_off', null), {label: deviceLabel()}));
+  commit(b);
+  lsSet(NOTIFY.on, null); lsSet(NOTIFY.tok, null); lsSet(NOTIFY.at, null);
+  dropPush(); paintNotify();
+  toast('تم إيقاف الإشعارات على هذا الهاتف');
+}
+// signing out: this phone stops getting the notifications of whoever signed out
+async function notifyLogout(){
+  const m = me(); if (!m || lsGet(NOTIFY.on) !== m.id) return;
+  lsSet(NOTIFY.on, null); lsSet(NOTIFY.at, null);
+  try { await within(setDoc(deviceRef(), deviceData(lsGet(NOTIFY.tok), false)), 3000); } catch (err) {}
+  lsSet(NOTIFY.tok, null);
+  await dropPush();
+}
+// Each start keeps this phone's token current (tokens change, and go stale after weeks); a phone whose notifications
+// were blocked from the browser's settings is switched off. The sender switches off a token it is told no longer exists.
+async function refreshNotify(){
+  const m = me(); if (!m || NOTIFY.checked === m.id || lsGet(NOTIFY.on) !== m.id || !st.online) return;
+  NOTIFY.checked = m.id;
+  if (notifySupport() !== 'ok' || Notification.permission !== 'granted') {
+    lsSet(NOTIFY.on, null); setDoc(deviceRef(), deviceData(lsGet(NOTIFY.tok), false)).catch(() => {}); return;
+  }
+  try {
+    let token = await fcmToken();
+    const snap = await getDoc(deviceRef()), d = snap.exists() ? snap.data() : null;
+    if (d && !d.on && d.err && d.token === token) { await dropPush(); token = await fcmToken(); }
+    if (d && d.on && d.token === token && Date.now() - Number(lsGet(NOTIFY.at) || 0) < 7 * 864e5) return;
+    await setDoc(deviceRef(), deviceData(token, true));
+    lsSet(NOTIFY.tok, token); lsSet(NOTIFY.at, Date.now());
+  } catch (err) { console.warn(err); }
+}
+// the owner sees, on a staff member's page, whether «الإشعارات» reach a phone of his
+const userDevs = {};
+async function loadUserDevices(uid){
+  try {
+    const snap = await getDocsFromServer(query(col('devices'), where('uid', '==', uid)));
+    const L = []; snap.forEach(d => { const x = d.data(); if (x.on) L.push(x.label || 'جهاز'); });
+    userDevs[uid] = L;
+  } catch (err) { userDevs[uid] = null; }
+  paintUserDevices(uid);
+}
+function paintUserDevices(uid, on){
+  const el = $('#u-ndev'); if (!el || el.dataset.uid !== uid) return;
+  const u = userById(uid), L = userDevs[uid], want = on === undefined ? !!(u && u.perms && u.perms.notify) : on;
+  el.textContent = !want || !L ? '' : L.length ? ` مفعّلة الآن على ${L.length === 1 ? `جهازه (${L[0]})` : countAr(L.length, 'جهاز واحد', 'جهازين', 'أجهزة', 'جهازاً')}.` : ' لم يفعّلها على هاتفه بعد.';
+}
+// tapping a notification: the service worker hands its target to the open app, or opens the app at #go=…
+let openWanted = null;
+function hashTarget(){
+  const m = /^#go=([a-z]+)(?:&id=([A-Za-z0-9_-]+))?$/.exec(location.hash || '');
+  if (!m) return null;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {}
+  return {go: m[1], id: m[2] || ''};
+}
+function openTarget(t){
+  if (!t) return;
+  if (st.phase !== 'app' || !me()) { openWanted = t; return; }
+  closeSheet();
+  if (t.go === 'approvals') go({tab: me().role === 'owner' ? 'approvals' : 'requests', view: null});
+  else if (t.go === 'customer' && t.id) go({tab: 'customers', view: {type: 'customer', id: t.id}});
+  else if (t.go === 'customers') go({tab: 'customers', view: null});
 }
 
 /* ---------- toast ---------- */
@@ -2426,6 +2598,8 @@ onAuthStateChanged(auth, u => {
     if (!st.me.active) { stopData(); st.phase = 'waiting'; render(); return; }
     if (st.phase !== 'app') {
       st.phase = 'app'; startData();
+      if (openWanted) { const t = openWanted; openWanted = null; openTarget(t); }
+      refreshNotify();
       // ask the browser not to clear this app's saved data (the sign-in and the offline copy) when space runs low
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (err) {}
     } else syncBooks();
@@ -2476,7 +2650,8 @@ const A = {
     } catch (err) { toastErr(err); }
   },
   'verify-resend'(){ const u = auth.currentUser; if (u) sendEmailVerification(u).then(() => toast('أعدنا إرسال الرابط'), err => toast(authMsg(err))); },
-  'logout'(){ closeSheet(); clearTimeout(toastTimer); $('#toast-root').innerHTML = ''; ui.authMode = 'login'; ui.tab = 'customers'; ui.view = null; ui.q = ''; ui.filter = 'all'; signOut(auth); },
+  async 'logout'(){ closeSheet(); clearTimeout(toastTimer); $('#toast-root').innerHTML = ''; ui.authMode = 'login'; ui.tab = 'customers'; ui.view = null; ui.q = ''; ui.filter = 'all'; await notifyLogout(); signOut(auth); },
+  'notify'(){ if (NOTIFY.busy) return; if (notifyOn()) disableNotify(); else enableNotify(); },
   'reload'(){ location.reload(); },
   'account'(){ openAccount(); },
   'install'(){ openInstall(); },
@@ -2568,13 +2743,15 @@ const A = {
     const on = !(u.perms && u.perms[d.k]);
     el.setAttribute('aria-checked', String(on));
     userWrite(u, {[`perms.${d.k}`]: on}, {type: 'user_perm', perm: d.k, on});
-    toast(on ? `مُنح ${u.name} صلاحية «${PERM_SHORT[d.k]}»` : `سُحبت صلاحية «${PERM_SHORT[d.k]}» من ${u.name}`);
+    if (d.k === 'notify') paintUserDevices(u.id, on);
+    toast(on ? `مُنح ${u.name} صلاحية «${PERM_SHORT[d.k]}»${d.k === 'notify' ? '. يفعّلها من اسمه أعلى التطبيق على هاتفه' : ''}` : `سُحبت صلاحية «${PERM_SHORT[d.k]}» من ${u.name}`);
   },
   'u-preset'(d){
     const u = userById(d.id); if (!u || u.role === 'owner') return;
     const perms = Object.assign({}, PRESETS[d.v]);
     document.querySelectorAll('[data-act="u-preset"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v)));
     $('#u-perms').innerHTML = permRows(Object.assign({}, u, {perms}));
+    paintUserDevices(u.id, !!perms.notify);
     userWrite(u, {role: d.v, perms}, {type: 'user_role', role: d.v});
     toast(`أصبح ${u.name} «${ROLES[d.v]}» بالصلاحيات الأساسية`);
   },
@@ -2659,12 +2836,15 @@ document.addEventListener('submit', ev => {
   }
 });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && $('#sheet-root').innerHTML) closeSheet(); });
-window.addEventListener('online', () => { st.online = true; renderNet(); });
+window.addEventListener('online', () => { st.online = true; renderNet(); if (st.phase === 'app') refreshNotify(); });
 window.addEventListener('offline', () => { st.online = false; renderNet(); });
 
 /* ---------- offline shell ---------- */
+openWanted = hashTarget();
+window.addEventListener('hashchange', () => { const t = hashTarget(); if (t) openTarget(t); });
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', ev => { const d = ev.data || {}; if (d.type === 'open') openTarget({go: String(d.go || ''), id: String(d.id || '')}); });
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && st.phase === 'app') toast('يتوفر تحديث جديد للتطبيق', {act: 'reload', label: 'تحديث'}); });
 }
