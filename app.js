@@ -29,16 +29,23 @@ const PERMS = [
   {k: 'reports', l: 'التقارير وتنزيل ملف الإكسل', s: 'جرد اليوم وتقرير الشهر.'},
   {k: 'edit', l: 'تعديل الحركات قبل موافقتك', s: 'المبلغ والمادة والتاريخ، ويُسجَّل كل تعديل في السجل.'},
   {k: 'customers', l: 'تعديل بيانات الزبائن', s: 'الاسم والرقم والمنطقة.'},
-  {k: 'messages', l: 'إرسال رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. تُرسل الرسالة من واتساب هاتفه.'},
-  {k: 'notify', l: 'إشعارات الديون والتسديدات', s: 'إشعار على هاتفه بكل دين أو تسديد للزبائن بعد موافقتك. يفعّلها من اسمه أعلى التطبيق.'}
+  {k: 'messages', l: 'إرسال رسائل واتساب للزبائن', s: 'التذكير وكشف الحساب ووصل الدين والتسديد. تُرسل الرسالة من واتساب هاتفه.'}
 ];
-const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', private: 'الديون الخاصة', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب', notify: 'الإشعارات'};
+// what the owner switches on, per staff member, for the notifications on his phone; the approval of his own requests
+// reaches him always. They came after «إشعارات الديون والتسديدات» (perms.notify), which still counts as both until the
+// owner sets either.
+const NOTIFY_PERMS = [
+  {k: 'nPay', l: 'التسديدات', s: 'إشعار بكل تسديد من أي زبون بعد اعتماده.'},
+  {k: 'nDebt', l: 'الديون الجديدة', s: 'إشعار بكل دين جديد على أي زبون بعد اعتماده.'}
+];
+const nPerm = (u, k) => !!u && (u.role === 'owner' || (!!u.perms && (u.perms[k] === true || (u.perms[k] === undefined && u.perms.notify === true))));
+const PERM_SHORT = {balances: 'الأرصدة', totals: 'مجموع الديون', companies: 'الشركات', private: 'الديون الخاصة', reports: 'التقارير', edit: 'تعديل الحركات', customers: 'بيانات الزبائن', messages: 'رسائل الواتساب', notify: 'الإشعارات', nPay: 'إشعار التسديدات', nDebt: 'إشعار الديون الجديدة'};
 const PRESETS = {
-  supervisor: {balances: true, totals: false, companies: false, private: false, reports: true, edit: true, customers: true, messages: false, notify: false},
-  staff: {balances: false, totals: false, companies: false, private: false, reports: false, edit: false, customers: false, messages: false, notify: false}
+  supervisor: {balances: true, totals: false, companies: false, private: false, reports: true, edit: true, customers: true, messages: false, nPay: false, nDebt: false},
+  staff: {balances: false, totals: false, companies: false, private: false, reports: false, edit: false, customers: false, messages: false, nPay: false, nDebt: false}
 };
 // the database rules take a new staff account only with exactly these five, all off; «totals», «companies»,
-// «private» and «notify» came later and a missing permission counts as off
+// «private», «nPay» and «nDebt» came later and a missing permission counts as off
 const SIGNUP_PERMS = {balances: false, reports: false, edit: false, customers: false, messages: false};
 const OWNER_ONLY = ['الموافقة والرفض', 'حذف الحركات', 'تعديل الأرصدة وحذف الزبائن والشركات والحسابات الخاصة', 'سقف الدين للزبائن', 'تفعيل الموظفين وتحديد صلاحياتهم وإزالة حساباتهم'];
 const CUR = {IQD: 'د.ع', USD: '$'};
@@ -407,26 +414,36 @@ const KIND = {
 };
 const kindOf = e => { const B = bookOf(e); return B ? KIND[B.id] : KIND.cust; };
 // A log line that also carries nt (the time the database saved it) and nx is a phone notification: the owner's Google
-// Apps Script reads such lines every minute and sends nx to the phones concerned (see «phone notifications» below).
-// wait: a request from the staff, to the owner; ok: a customer's debt or payment counted, to the staff with «الإشعارات»
-// (bb, with the balance, to those who may see balances). The texts are written here, as the app words everything else.
-const pushMark = nx => ({nt: serverTimestamp(), nx});
-function pushWait(e, name){
-  const B = bookOf(e), who = me().name, a = amtText(e.amount, e.cur);
+// Apps Script reads such lines every minute and sends nx (one, or a list) to the phones concerned (see «phone
+// notifications» below). wait: a request from the staff, to the owner; ok: a customer's debt or payment counted, to the
+// staff the owner switched it on for; me: «تمت الموافقة على طلبك», to whoever made the request (never also its ok). bb, with the
+// balance, goes to those who may see balances. The texts are written here, as the app words everything else.
+const pushMark = (...items) => ({nt: serverTimestamp(), nx: items.length === 1 ? items[0] : items});
+// what an entry was, in one line: «تسديد 100,000 د.ع من صالون ليالي», «قائمة شراء 1,000,000 د.ع من شركة الريم»
+function pushWhat(e, name){
+  const B = bookOf(e), a = amtText(e.amount, e.cur);
   name = name || partyName(e);
-  let b;
-  if (!B) b = e.opening ? `${who} أضاف ${name} إلى الزبائن برصيد سابق ${a}` : e.type === 'debt' ? `${who} سجّل دين ${a} على ${name}` : `${who} سجّل تسديد ${a} من ${name}`;
-  else {
-    const T = B.types[e.type];
-    b = e.opening ? `${who} أضاف ${name} إلى ${B.id === 'co' ? 'الشركات' : 'الديون الخاصة'} برصيد سابق ${a} ${T.sign > 0 ? B.t.in : B.t.out}`
-      : `${who} سجّل ${T.l} ${a} ${T.sign > 0 ? 'إلى' : 'من'} ${name}`;
-  }
-  return pushMark({k: 'wait', t: 'طلب بانتظار موافقتك', b, go: 'approvals', tag: `w-${e.id}`});
+  if (!B) return e.opening ? `رصيد سابق ${a} على ${name}` : e.type === 'debt' ? `دين ${a} على ${name}` : `تسديد ${a} من ${name}`;
+  const T = B.types[e.type];
+  return e.opening ? `رصيد سابق ${a} ${T.sign > 0 ? B.t.in : B.t.out} — ${name}` : `${T.l} ${a} ${T.sign > 0 ? 'إلى' : 'من'} ${name}`;
+}
+const leftText = (e, v) => v > 0 ? `${e.type === 'pay' ? 'المتبقي' : 'الرصيد'} ${amtText(v, e.cur)}` : v < 0 ? `الرصيد: له ${amtText(-v, e.cur)}` : 'الحساب مسدّد بالكامل';
+function pushWait(e, name){
+  const B = bookOf(e), who = me().name;
+  name = name || partyName(e);
+  const b = !e.opening ? `${who} سجّل ${pushWhat(e, name)}`
+    : `${who} أضاف ${name} إلى ${!B ? 'الزبائن' : B.id === 'co' ? 'الشركات' : 'الديون الخاصة'} برصيد سابق ${amtText(e.amount, e.cur)}${B ? ` ${B.types[e.type].sign > 0 ? B.t.in : B.t.out}` : ''}`;
+  return {k: 'wait', t: 'طلب بانتظار موافقتك', b, go: 'approvals', tag: `w-${e.id}`};
 }
 function pushOk(e, after){
-  const c = (cust(e.cid) || {}).name || '', pay = e.type === 'pay', v = after[e.cur], b = `${amtText(e.amount, e.cur)}، سجّله ${uname(e.by)}`;
-  const left = v > 0 ? `${pay ? 'المتبقي' : 'الرصيد'} ${amtText(v, e.cur)}` : v < 0 ? `الرصيد: له ${amtText(-v, e.cur)}` : 'الحساب مسدّد بالكامل';
-  return pushMark({k: 'ok', t: pay ? `تسديد من ${c}` : `دين على ${c}`, b, bb: `${b}. ${left}`, go: 'customer', id: e.cid, tag: `k-${e.id}`});
+  const c = (cust(e.cid) || {}).name || '', b = `${amtText(e.amount, e.cur)}، سجّله ${uname(e.by)}`;
+  return {k: 'ok', et: e.type, t: e.type === 'pay' ? `تسديد من ${c}` : `دين جديد على ${c}`, b, bb: `${b}. ${leftText(e, after[e.cur])}`, go: 'customer', id: e.cid, tag: `k-${e.id}`};
+}
+// after: the customer's balance with this entry counted (customers only)
+function pushMe(e, after){
+  const B = bookOf(e), b = pushWhat(e), x = {k: 'me', to: e.by, t: 'تمت الموافقة على طلبك', b, go: B ? B.id : 'customer', id: B ? e[B.key] : e.cid, tag: `m-${e.id}`};
+  if (!B && after && !e.opening) x.bb = `${b}. ${leftText(e, after[e.cur])}`;
+  return x;
 }
 function nextReceipt(){ const m = me(); const seq = (m.seq || 0) + 1; return {seq, no: `${m.code || 0}-${String(seq).padStart(4, '0')}`}; }
 function addEntry(o){
@@ -444,8 +461,8 @@ function addEntry(o){
   b.update(ref('users', m.id), {seq});
   if (isOwner) b.update(ref('customers', o.cid), {[`bal.${o.cur}`]: increment(effect(e)), lastAt: now});
   const log = o.adjust ? logOf('adjust', full, {from: o.from, to: o.to, note: e.note}) : logOf('create', full, o.cname ? {cname: o.cname} : null);
-  if (!isOwner) Object.assign(log, pushWait(full, o.cname));
-  else if (!o.adjust && !o.opening) Object.assign(log, pushOk(full, withEffect(bal(o.cid), full)));
+  if (!isOwner) Object.assign(log, pushMark(pushWait(full, o.cname)));
+  else if (!o.adjust && !o.opening) Object.assign(log, pushMark(pushOk(full, withEffect(bal(o.cid), full))));
   b.set(doc(col('log')), log);
   st.me = Object.assign({}, m, {seq});
   commit(b, isOwner ? () => recompute(o.cid) : null);
@@ -455,8 +472,10 @@ function approveEntry(e){
   const K = kindOf(e), pid = e[K.key], m = me(), now = Date.now(), b = writeBatch(fs);
   b.update(ref(K.col, e.id), {status: 'approved', approvedBy: m.id, approvedAt: now});
   b.update(ref(K.parent, pid), {[`bal.${e.cur}`]: increment(K.effect(e)), lastAt: now});
-  const log = logOf('approve', e);
-  if (K === KIND.cust && !e.opening && !e.adjust) Object.assign(log, pushOk(e, withEffect(bal(pid), e)));
+  const log = logOf('approve', e), after = K === KIND.cust ? withEffect(bal(pid), e) : null, items = [];
+  if (K === KIND.cust && !e.opening && !e.adjust) items.push(pushOk(e, after));
+  if (e.by && e.by !== m.id) items.push(pushMe(e, after));
+  if (items.length) Object.assign(log, pushMark(...items));
   b.set(doc(col('log')), log);
   commit(b, () => K.heal(pid));
   return Object.assign({}, e, {status: 'approved', approvedBy: m.id, approvedAt: now});
@@ -522,7 +541,7 @@ function addCustomer(o, open){
     b.set(er, e);
     b.update(ref('users', m.id), {seq});
     st.me = Object.assign({}, m, {seq});
-    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {cname: c.name}, isOwner ? null : pushWait(Object.assign({id: er.id}, e), c.name)));
+    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {cname: c.name}, isOwner ? null : pushMark(pushWait(Object.assign({id: er.id}, e), c.name))));
   }
   commit(b);
   // show the new customer right away; the live snapshot replaces this copy
@@ -569,7 +588,7 @@ function addBookEntry(B, o){
   b.set(r, e);
   b.update(ref('users', m.id), {seq});
   if (isOwner) b.update(ref(B.col, o.id), {[`bal.${o.cur}`]: increment(bEffect(e)), lastAt: now});
-  b.set(doc(col('log')), Object.assign(logOf('create', full), isOwner ? null : pushWait(full)));
+  b.set(doc(col('log')), Object.assign(logOf('create', full), isOwner ? null : pushMark(pushWait(full))));
   st.me = Object.assign({}, m, {seq});
   commit(b, isOwner ? () => bRecompute(B, o.id) : null);
   return full;
@@ -593,7 +612,7 @@ function addParty(B, o, open){
     b.set(er, e);
     b.update(ref('users', m.id), {seq});
     st.me = Object.assign({}, m, {seq});
-    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {[B.nameKey]: c.name}, isOwner ? null : pushWait(Object.assign({id: er.id}, e), c.name)));
+    b.set(doc(col('log')), Object.assign(logOf('create', Object.assign({id: er.id}, e)), {[B.nameKey]: c.name}, isOwner ? null : pushMark(pushWait(Object.assign({id: er.id}, e), c.name))));
   }
   commit(b);
   // show the new account right away; the live snapshot replaces this copy
@@ -1724,7 +1743,8 @@ function usersScreen(){
   for (const u of st.users.filter(x => x.role === 'owner' || (!x.removed && (x.active || x.code)))) {
     if (u.role === 'owner') { h += `<div class="row" style="cursor:default"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)}</span><span class="sub">صاحب الدفتر، ولديه جميع الصلاحيات</span></span><span class="role owner">المدير</span></div>`; continue; }
     const on = PERMS.filter(p => u.perms && u.perms[p.k]);
-    const pills = !u.active ? '<span class="pill late">الحساب موقوف</span>' : on.length ? on.map(p => `<span class="pill ${p.k === 'messages' ? 'ok' : 'off'}">${PERM_SHORT[p.k]}</span>`).join('') : '<span class="pill off">تسجيل فقط</span>';
+    const bell = nPerm(u, 'nPay') || nPerm(u, 'nDebt') ? '<span class="pill off">الإشعارات</span>' : '';
+    const pills = !u.active ? '<span class="pill late">الحساب موقوف</span>' : on.length || bell ? on.map(p => `<span class="pill ${p.k === 'messages' ? 'ok' : 'off'}">${PERM_SHORT[p.k]}</span>`).join('') + bell : '<span class="pill off">تسجيل فقط</span>';
     h += `<button class="row" data-act="edit-user" data-id="${u.id}"><span class="av">${esc(initial(u.name))}</span><span class="main"><span class="name">${esc(u.name)} <span class="role">${ROLES[u.role]}</span></span><span class="pills">${pills}</span></span>${ic('back', 'flip')}</button>`;
   }
   h += '</div>';
@@ -2279,7 +2299,10 @@ function savePartyForm(){
   toast(open && u.role !== 'owner' ? `${B.t.added}، والرصيد السابق بانتظار موافقة ${ownerName()}` : B.t.added);
 }
 function permRows(u){
-  return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}${p.k === 'notify' ? `<span id="u-ndev" data-uid="${u.id}"></span>` : ''}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
+  return PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}</small></span><button class="switch" role="switch" aria-checked="${!!(u.perms && u.perms[p.k])}" aria-label="${p.l}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
+}
+function notifyPermRows(u){
+  return NOTIFY_PERMS.map(p => `<div class="urow"><span class="main"><b>${p.l}</b><small>${p.s}</small></span><button class="switch" role="switch" aria-checked="${nPerm(u, p.k)}" aria-label="${PERM_SHORT[p.k]}" data-act="u-perm" data-id="${u.id}" data-k="${p.k}"></button></div>`).join('');
 }
 function openUserSheet(id){
   const u = userById(id); if (!u || u.role === 'owner') return;
@@ -2289,6 +2312,9 @@ function openUserSheet(id){
         <div class="seg" role="group" aria-label="المسمى الوظيفي"><button type="button" data-act="u-preset" data-id="${u.id}" data-v="supervisor" aria-pressed="${u.role === 'supervisor'}">مشرف</button><button type="button" data-act="u-preset" data-id="${u.id}" data-v="staff" aria-pressed="${u.role === 'staff'}">موظف</button></div>
         <span class="note">${ic('info')}<span>اختيار المسمى يعيد الصلاحيات الأساسية، ثم يمكنك تعديل كل صلاحية على حدة.</span></span></div>
       <div class="field"><span class="lbl">الصلاحيات</span><div class="list" id="u-perms">${permRows(u)}</div></div>
+      <div class="field"><span class="lbl">إشعارات هاتفه</span><div class="list" id="u-nperms">${notifyPermRows(u)}</div>
+        <span class="note">${ic('info')}<span>وتصله دائماً الموافقة على كل طلب يسجّله، بعد أن يفعّل الإشعارات من اسمه أعلى التطبيق على هاتفه.</span></span>
+        <span class="note" id="u-ndev" data-uid="${u.id}" hidden>${ic('bell')}<span></span></span></div>
       <div class="list"><div class="urow"><span class="main"><b>الحساب مفعّل</b><small>عند إيقافه لن يتمكن من الدخول، وتبقى حركاته باسمه في السجل.</small></span><button class="switch" role="switch" aria-checked="${!!u.active}" aria-label="الحساب مفعّل" data-act="toggle-active" data-id="${u.id}"></button></div></div>
       <p class="note">${ic('shield')}<span>تبقى الموافقة والرفض والحذف من صلاحياتك وحدك.</span></p>
       <button class="btn btn-ghost danger block" data-act="rm-user" data-id="${u.id}">${ic('trash')}إزالة الحساب</button>
@@ -2318,7 +2344,9 @@ function openInstall(){
 // The phones are notified through Firebase Cloud Messaging. The app has no server of its own: a Google Apps Script in
 // the owner's Google account reads, every minute, the log lines marked nt (pushMark above) and sends their nx:
 //   wait  — a request from the staff, to the owner's phones;
-//   ok    — a customer's debt or payment counted, to the staff with «الإشعارات» (never to whoever counted it);
+//   ok    — a customer's debt or payment counted (et), to the staff the owner switched it on for (never to whoever
+//           counted it);
+//   me    — «تمت الموافقة على طلبك», to whoever made the request, whatever his permissions;
 //   hello — the first notification of a phone just switched on, to that phone only.
 // Each phone is one devices/{uid}_{device} document: its FCM token and whether it is on. Switching off, and signing out,
 // turn it off and drop the phone's push subscription, so a phone that changes hands stops getting them at once.
@@ -2351,10 +2379,20 @@ async function fcmToken(){
   return fcmMod.getToken(fcmMod.getMessaging(fbApp), {vapidKey: VAPID_KEY, serviceWorkerRegistration: reg});
 }
 async function dropPush(){ try { const reg = await navigator.serviceWorker.getRegistration(); const sub = reg && await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (err) {} }
+// what this phone will be told, in the account sheet and in its first notification
+function notifyWhat(m){
+  if (m.role === 'owner') return {title: 'إشعارات الموافقات', sub: 'إشعار على هذا الهاتف بكل طلب يحتاج موافقتك.', hello: 'ستصلك هنا الطلبات التي تحتاج موافقتك.'};
+  const pay = nPerm(m, 'nPay'), debt = nPerm(m, 'nDebt');
+  const what = pay && debt ? 'بكل دين أو تسديد للزبائن بعد اعتماده، وعند الموافقة على طلباتك' : pay ? 'بكل تسديد من الزبائن بعد اعتماده، وعند الموافقة على طلباتك'
+    : debt ? 'بكل دين جديد على الزبائن بعد اعتماده، وعند الموافقة على طلباتك' : 'عند الموافقة على طلباتك';
+  const hello = pay && debt ? 'ديون الزبائن وتسديداتهم بعد اعتمادها، والموافقة على طلباتك' : pay ? 'تسديدات الزبائن بعد اعتمادها، والموافقة على طلباتك'
+    : debt ? 'ديون الزبائن الجديدة بعد اعتمادها، والموافقة على طلباتك' : 'الموافقة على طلباتك';
+  return {title: 'الإشعارات', sub: `إشعار على هذا الهاتف ${what}.`, hello: `ستصلك هنا ${hello}.`};
+}
 function notifyRow(){
-  const m = me(); if (!has(m, 'notify')) return '';
-  const owner = m.role === 'owner', sup = notifySupport(), title = owner ? 'إشعارات الموافقات' : 'إشعارات الديون والتسديدات';
-  let sub = owner ? 'إشعار على هذا الهاتف بكل طلب يحتاج موافقتك.' : 'إشعار على هذا الهاتف بكل دين أو تسديد للزبائن بعد اعتماده.', off = false;
+  const m = me(); if (!m) return '';
+  const w = notifyWhat(m), sup = notifySupport(), title = w.title;
+  let sub = w.sub, off = false;
   if (sup === 'ios') { sub = 'على الآيفون، ثبّت التطبيق على الشاشة الرئيسية أولاً، ثم فعّل الإشعارات من داخله.'; off = true; }
   else if (sup === 'none') { sub = 'هذا المتصفح لا يدعم الإشعارات.'; off = true; }
   else if (Notification.permission === 'denied') { sub = 'الإشعارات محظورة لهذا التطبيق في المتصفح. اسمح بها من إعدادات الموقع، ثم فعّلها من هنا.'; off = true; }
@@ -2373,7 +2411,7 @@ async function enableNotify(){
     const r = deviceRef(), b = writeBatch(fs);
     b.set(r, deviceData(token, true));
     b.set(doc(col('log')), Object.assign(logOf('notify_on', null), {label: deviceLabel()}, pushMark({k: 'hello', t: 'تم تفعيل الإشعارات',
-      b: m.role === 'owner' ? 'ستصلك هنا الطلبات التي تحتاج موافقتك.' : 'ستصلك هنا ديون الزبائن وتسديداتهم بعد اعتمادها.', dev: r.id, tag: 'hello'})));
+      b: notifyWhat(m).hello, dev: r.id, tag: 'hello'})));
     await within(b.commit(), 20000);
     lsSet(NOTIFY.on, m.id); lsSet(NOTIFY.tok, token); lsSet(NOTIFY.at, Date.now()); NOTIFY.checked = m.id;
     toast('تم تفعيل الإشعارات على هذا الهاتف. يصلك إشعار تجريبي خلال دقيقة');
@@ -2422,7 +2460,7 @@ async function refreshNotify(){
     lsSet(NOTIFY.tok, token); lsSet(NOTIFY.at, Date.now());
   } catch (err) { console.warn(err); }
 }
-// the owner sees, on a staff member's page, whether «الإشعارات» reach a phone of his
+// the owner sees, on a staff member's page, whether notifications reach a phone of his
 const userDevs = {};
 async function loadUserDevices(uid){
   try {
@@ -2432,10 +2470,11 @@ async function loadUserDevices(uid){
   } catch (err) { userDevs[uid] = null; }
   paintUserDevices(uid);
 }
-function paintUserDevices(uid, on){
+function paintUserDevices(uid){
   const el = $('#u-ndev'); if (!el || el.dataset.uid !== uid) return;
-  const u = userById(uid), L = userDevs[uid], want = on === undefined ? !!(u && u.perms && u.perms.notify) : on;
-  el.textContent = !want || !L ? '' : L.length ? ` مفعّلة الآن على ${L.length === 1 ? `جهازه (${L[0]})` : countAr(L.length, 'جهاز واحد', 'جهازين', 'أجهزة', 'جهازاً')}.` : ' لم يفعّلها على هاتفه بعد.';
+  const L = userDevs[uid];
+  el.hidden = !L;
+  if (L) el.querySelector('span').textContent = L.length ? `الإشعارات مفعّلة على ${L.length === 1 ? `جهازه (${L[0]})` : countAr(L.length, 'جهاز واحد', 'جهازين', 'أجهزة', 'جهازاً')}.` : 'لم يفعّل الإشعارات على هاتفه بعد.';
 }
 // tapping a notification: the service worker hands its target to the open app, or opens the app at #go=…
 let openWanted = null;
@@ -2451,6 +2490,7 @@ function openTarget(t){
   closeSheet();
   if (t.go === 'approvals') go({tab: me().role === 'owner' ? 'approvals' : 'requests', view: null});
   else if (t.go === 'customer' && t.id) go({tab: 'customers', view: {type: 'customer', id: t.id}});
+  else if (BOOK[t.go] && t.id) go({tab: BOOK[t.go].tab, view: {type: BOOK[t.go].view, id: t.id}});
   else if (t.go === 'customers') go({tab: 'customers', view: null});
 }
 
@@ -2740,18 +2780,17 @@ const A = {
   'edit-user'(d){ openUserSheet(d.id); },
   'u-perm'(d, el){
     const u = userById(d.id); if (!u || u.role === 'owner') return;
-    const on = !(u.perms && u.perms[d.k]);
+    const on = NOTIFY_PERMS.some(p => p.k === d.k) ? !nPerm(u, d.k) : !(u.perms && u.perms[d.k]);
     el.setAttribute('aria-checked', String(on));
     userWrite(u, {[`perms.${d.k}`]: on}, {type: 'user_perm', perm: d.k, on});
-    if (d.k === 'notify') paintUserDevices(u.id, on);
-    toast(on ? `مُنح ${u.name} صلاحية «${PERM_SHORT[d.k]}»${d.k === 'notify' ? '. يفعّلها من اسمه أعلى التطبيق على هاتفه' : ''}` : `سُحبت صلاحية «${PERM_SHORT[d.k]}» من ${u.name}`);
+    toast(on ? `مُنح ${u.name} صلاحية «${PERM_SHORT[d.k]}»${d.k === 'nPay' || d.k === 'nDebt' ? '. يفعّل الإشعارات من اسمه أعلى التطبيق على هاتفه' : ''}` : `سُحبت صلاحية «${PERM_SHORT[d.k]}» من ${u.name}`);
   },
   'u-preset'(d){
     const u = userById(d.id); if (!u || u.role === 'owner') return;
     const perms = Object.assign({}, PRESETS[d.v]);
     document.querySelectorAll('[data-act="u-preset"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === d.v)));
     $('#u-perms').innerHTML = permRows(Object.assign({}, u, {perms}));
-    paintUserDevices(u.id, !!perms.notify);
+    $('#u-nperms').innerHTML = notifyPermRows(Object.assign({}, u, {perms}));
     userWrite(u, {role: d.v, perms}, {type: 'user_role', role: d.v});
     toast(`أصبح ${u.name} «${ROLES[d.v]}» بالصلاحيات الأساسية`);
   },
