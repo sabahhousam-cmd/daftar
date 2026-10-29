@@ -416,7 +416,8 @@ const kindOf = e => { const B = bookOf(e); return B ? KIND[B.id] : KIND.cust; };
 // A log line that also carries nt (the time the database saved it) and nx is a phone notification: the owner's Google
 // Apps Script reads such lines every minute and sends nx (one, or a list) to the phones concerned (see «phone
 // notifications» below). wait: a request from the staff, to the owner; ok: a customer's debt or payment counted, to the
-// staff the owner switched it on for; me: «تمت الموافقة على طلبك», to whoever made the request (never also its ok). bb, with the
+// staff the owner switched it on for; me: «تمت الموافقة على طلبك», to whoever made the request (never also its ok); no:
+// «رُفض طلبك», to him too. bb, with the
 // balance, goes to those who may see balances. The texts are written here, as the app words everything else.
 const pushMark = (...items) => ({nt: serverTimestamp(), nx: items.length === 1 ? items[0] : items});
 // what an entry was, in one line: «تسديد 100,000 د.ع من صالون ليالي», «قائمة شراء 1,000,000 د.ع من شركة الريم»
@@ -439,6 +440,8 @@ function pushOk(e, after){
   const c = (cust(e.cid) || {}).name || '', b = `${amtText(e.amount, e.cur)}، سجّله ${uname(e.by)}`;
   return {k: 'ok', et: e.type, t: e.type === 'pay' ? `تسديد من ${c}` : `دين جديد على ${c}`, b, bb: `${b}. ${leftText(e, after[e.cur])}`, go: 'customer', id: e.cid, tag: `k-${e.id}`};
 }
+// «رُفض طلبك» with the reason; tapping it opens «طلباتي», where the rejected entry waits to be corrected
+const pushNo = (e, reason) => ({k: 'no', to: e.by, t: 'رُفض طلبك', b: `${pushWhat(e)}${reason ? `. السبب: ${reason}` : ''}`, go: 'requests', tag: `n-${e.id}`});
 // after: the customer's balance with this entry counted (customers only)
 function pushMe(e, after){
   const B = bookOf(e), b = pushWhat(e), x = {k: 'me', to: e.by, t: 'تمت الموافقة على طلبك', b, go: B ? B.id : 'customer', id: B ? e[B.key] : e.cid, tag: `m-${e.id}`};
@@ -483,7 +486,7 @@ function approveEntry(e){
 function rejectEntry(e, reason){
   const K = kindOf(e), m = me(), now = Date.now(), b = writeBatch(fs);
   b.update(ref(K.col, e.id), {status: 'rejected', rejectedBy: m.id, rejectedAt: now, reason: reason || ''});
-  b.set(doc(col('log')), logOf('reject', e, {reason: reason || ''}));
+  b.set(doc(col('log')), Object.assign(logOf('reject', e, {reason: reason || ''}), e.by && e.by !== m.id ? pushMark(pushNo(e, reason)) : null));
   commit(b);
 }
 function editEntry(e, patch){
@@ -2313,7 +2316,7 @@ function openUserSheet(id){
         <span class="note">${ic('info')}<span>اختيار المسمى يعيد الصلاحيات الأساسية، ثم يمكنك تعديل كل صلاحية على حدة.</span></span></div>
       <div class="field"><span class="lbl">الصلاحيات</span><div class="list" id="u-perms">${permRows(u)}</div></div>
       <div class="field"><span class="lbl">إشعارات هاتفه</span><div class="list" id="u-nperms">${notifyPermRows(u)}</div>
-        <span class="note">${ic('info')}<span>وتصله دائماً الموافقة على كل طلب يسجّله، بعد أن يفعّل الإشعارات من اسمه أعلى التطبيق على هاتفه.</span></span>
+        <span class="note">${ic('info')}<span>ويصله دائماً قبول كل طلب يسجّله أو رفضه، بعد أن يفعّل الإشعارات من اسمه أعلى التطبيق على هاتفه.</span></span>
         <span class="note" id="u-ndev" data-uid="${u.id}" hidden>${ic('bell')}<span></span></span></div>
       <div class="list"><div class="urow"><span class="main"><b>الحساب مفعّل</b><small>عند إيقافه لن يتمكن من الدخول، وتبقى حركاته باسمه في السجل.</small></span><button class="switch" role="switch" aria-checked="${!!u.active}" aria-label="الحساب مفعّل" data-act="toggle-active" data-id="${u.id}"></button></div></div>
       <p class="note">${ic('shield')}<span>تبقى الموافقة والرفض والحذف من صلاحياتك وحدك.</span></p>
@@ -2347,6 +2350,7 @@ function openInstall(){
 //   ok    — a customer's debt or payment counted (et), to the staff the owner switched it on for (never to whoever
 //           counted it);
 //   me    — «تمت الموافقة على طلبك», to whoever made the request, whatever his permissions;
+//   no    — «رُفض طلبك» with the reason, to him too;
 //   hello — the first notification of a phone just switched on, to that phone only.
 // Each phone is one devices/{uid}_{device} document: its FCM token and whether it is on. Switching off, and signing out,
 // turn it off and drop the phone's push subscription, so a phone that changes hands stops getting them at once.
@@ -2383,10 +2387,10 @@ async function dropPush(){ try { const reg = await navigator.serviceWorker.getRe
 function notifyWhat(m){
   if (m.role === 'owner') return {title: 'إشعارات الموافقات', sub: 'إشعار على هذا الهاتف بكل طلب يحتاج موافقتك.', hello: 'ستصلك هنا الطلبات التي تحتاج موافقتك.'};
   const pay = nPerm(m, 'nPay'), debt = nPerm(m, 'nDebt');
-  const what = pay && debt ? 'بكل دين أو تسديد للزبائن بعد اعتماده، وعند الموافقة على طلباتك' : pay ? 'بكل تسديد من الزبائن بعد اعتماده، وعند الموافقة على طلباتك'
-    : debt ? 'بكل دين جديد على الزبائن بعد اعتماده، وعند الموافقة على طلباتك' : 'عند الموافقة على طلباتك';
-  const hello = pay && debt ? 'ديون الزبائن وتسديداتهم بعد اعتمادها، والموافقة على طلباتك' : pay ? 'تسديدات الزبائن بعد اعتمادها، والموافقة على طلباتك'
-    : debt ? 'ديون الزبائن الجديدة بعد اعتمادها، والموافقة على طلباتك' : 'الموافقة على طلباتك';
+  const what = pay && debt ? 'بكل دين أو تسديد للزبائن بعد اعتماده، وعند قبول طلباتك أو رفضها' : pay ? 'بكل تسديد من الزبائن بعد اعتماده، وعند قبول طلباتك أو رفضها'
+    : debt ? 'بكل دين جديد على الزبائن بعد اعتماده، وعند قبول طلباتك أو رفضها' : 'عند قبول طلباتك أو رفضها';
+  const hello = pay && debt ? 'ديون الزبائن وتسديداتهم بعد اعتمادها، وقبول طلباتك أو رفضها' : pay ? 'تسديدات الزبائن بعد اعتمادها، وقبول طلباتك أو رفضها'
+    : debt ? 'ديون الزبائن الجديدة بعد اعتمادها، وقبول طلباتك أو رفضها' : 'قبول طلباتك أو رفضها';
   return {title: 'الإشعارات', sub: `إشعار على هذا الهاتف ${what}.`, hello: `ستصلك هنا ${hello}.`};
 }
 function notifyRow(){
@@ -2488,7 +2492,7 @@ function openTarget(t){
   if (!t) return;
   if (st.phase !== 'app' || !me()) { openWanted = t; return; }
   closeSheet();
-  if (t.go === 'approvals') go({tab: me().role === 'owner' ? 'approvals' : 'requests', view: null});
+  if (t.go === 'approvals' || t.go === 'requests') go({tab: me().role === 'owner' ? 'approvals' : 'requests', view: null});
   else if (t.go === 'customer' && t.id) go({tab: 'customers', view: {type: 'customer', id: t.id}});
   else if (BOOK[t.go] && t.id) go({tab: BOOK[t.go].tab, view: {type: BOOK[t.go].view, id: t.id}});
   else if (t.go === 'customers') go({tab: 'customers', view: null});
